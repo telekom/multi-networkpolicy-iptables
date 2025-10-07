@@ -53,4 +53,3 @@ setup() {
 	run kubectl -n test-protocol-only-ports wait --for=delete -l app=test-protocol-only-ports pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 }
-#2.2.6.18
