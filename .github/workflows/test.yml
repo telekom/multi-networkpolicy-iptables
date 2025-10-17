@@ -33,9 +33,13 @@ jobs:
     - name: Run go vet
       run: go vet ./...
 
+    - name: Show kernel modules
+      run: sudo lsmod
+
     - name: Test
       run: sudo modprobe nf_tables && sudo go test -v -coverprofile=profile.cov ./...
-
+    - name: Show kernel modules
+      run: sudo lsmod
     - name: Send coverage
       uses: shogo82148/actions-goveralls@v1
       with:
