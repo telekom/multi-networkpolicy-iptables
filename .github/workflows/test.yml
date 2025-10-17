@@ -37,8 +37,10 @@ jobs:
       run: sudo lsmod
 
     - name: Test
-      run: sudo modprobe nf_tables && sudo go test -v -coverprofile=profile.cov ./...
+      run: sudo go test -v -coverprofile=profile.cov ./...
+
     - name: Show kernel modules
+      if: always()
       run: sudo lsmod
     - name: Send coverage
       uses: shogo82148/actions-goveralls@v1
