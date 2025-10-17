@@ -6,13 +6,11 @@ on:
       - "nftables"
       - "main"
       - "master"
-      - "test-ci"
   pull_request:
     branches:
       - "nftables"
       - "main"
       - "master"
-      - "test-ci"
   schedule:
     - cron: "58 6 * * 4"
 
