@@ -33,15 +33,10 @@ jobs:
     - name: Run go vet
       run: go vet ./...
 
-    - name: Show kernel modules
-      run: sudo lsmod
 
     - name: Test
       run: sudo modprobe nft_ct && sudo go test -v -coverprofile=profile.cov ./...
 
-    - name: Show kernel modules
-      if: always()
-      run: sudo lsmod
     - name: Send coverage
       uses: shogo82148/actions-goveralls@v1
       with:
