@@ -158,7 +158,7 @@ func TestApplyCommonChainRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyCommonChainRules() failed: %v", err)
 	}
-	c.Flush()
+	nftState.nft.Flush()
 
 	checkCommon := func() bool {
 		filterTable, err := c.ListTableOfFamily(nftState.filter.Name, nftables.TableFamilyINet)
