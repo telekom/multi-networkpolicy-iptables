@@ -9,9 +9,6 @@ on:
 jobs:
   e2e-kind:
     runs-on: ubuntu-latest
-    if: >
-      (( github.event.pull_request.head.repo.owner.login != github.event.pull_request.base.repo.owner.login ) &&
-        github.event_name == 'pull_request' ) || (github.event_name == 'push' && github.event.commits != '[]' )
     steps:
       - name: Install bats
         run: sudo apt install bats
