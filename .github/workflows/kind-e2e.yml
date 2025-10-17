@@ -1,5 +1,11 @@
 name: e2e-kind
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+      - master
+      - nftables
+  pull_request:
 jobs:
   e2e-kind:
     runs-on: ubuntu-latest
