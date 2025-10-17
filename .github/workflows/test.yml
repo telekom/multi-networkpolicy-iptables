@@ -1,4 +1,10 @@
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+      - master
+      - nftables
+  pull_request:
 name: test
 jobs:
   test:
