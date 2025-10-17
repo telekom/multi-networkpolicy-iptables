@@ -37,7 +37,7 @@ jobs:
       run: sudo lsmod
 
     - name: Test
-      run: sudo go test -v -coverprofile=profile.cov ./...
+      run: sudo modprobe nft_ct && sudo go test -v -coverprofile=profile.cov ./...
 
     - name: Show kernel modules
       if: always()
