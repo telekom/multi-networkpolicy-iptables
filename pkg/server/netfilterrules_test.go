@@ -31,8 +31,8 @@ const DEBUG = false
 func TestBootstrap(t *testing.T) {
 	// Open a system connection in a separate network namespace it requires root
 	c, newNS := nftest.OpenSystemConn(t, true, DEBUG)
-	defer c.CloseLasting()
 	defer nftest.CleanupSystemConn(t, newNS, DEBUG)
+	defer c.CloseLasting()
 	c.FlushRuleset()
 	defer c.FlushRuleset()
 	podMockInfo := &controllers.PodInfo{
@@ -127,8 +127,8 @@ func TestBootstrap(t *testing.T) {
 
 func TestApplyCommonChainRules(t *testing.T) {
 	c, newNS := nftest.OpenSystemConn(t, true, DEBUG)
-	defer c.CloseLasting()
 	defer nftest.CleanupSystemConn(t, newNS, DEBUG)
+	defer c.CloseLasting()
 	c.FlushRuleset()
 	defer c.FlushRuleset()
 	podMockInfo := &controllers.PodInfo{
