@@ -31,22 +31,22 @@ setup() {
 
 @test "check generated nft rules" {
 	# check pod-server has multi-networkpolicy nftables rules for ingress
-	run kubectl -n test-simple-v4-ingress-multi exec pod-server -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-server -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-1"
 	[ "$status" -eq  "0" ]
 	# check pod-client-a has NO multi-networkpolicy nftables rules for ingress
-	run kubectl -n test-simple-v4-ingress-multi exec pod-client-a -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-client-a -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-1"
 	[ "$status" -eq  "1" ]
 	# check pod-client-b has NO multi-networkpolicy nftables rules for ingress
-	run kubectl -n test-simple-v4-ingress-multi exec pod-client-b -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-client-b -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-1"
 	[ "$status" -eq  "1" ]
 
-	run kubectl -n test-simple-v4-ingress-multi exec pod-server -- sh -c "nft list ruleset | grep multi-ingress-1"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-server -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-2"
 	[ "$status" -eq  "0" ]
 	# check pod-client-a has NO multi-networkpolicy nftables rules for ingress
-	run kubectl -n test-simple-v4-ingress-multi exec pod-client-a -- sh -c "nft list ruleset | grep multi-ingress-1"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-client-a -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-2"
 	[ "$status" -eq  "1" ]
 	# check pod-client-b has NO multi-networkpolicy nftables rules for ingress
-	run kubectl -n test-simple-v4-ingress-multi exec pod-client-b -- sh -c "nft list ruleset | grep multi-ingress-1"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-client-b -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-2"
 	[ "$status" -eq  "1" ]
 }
 
@@ -110,9 +110,9 @@ setup() {
 	kubectl -n kube-system wait --for=delete -l app=multi-networkpolicy pod --timeout=${kubewait_timeout}
 
 	# check nft rules in pod-server
-	run kubectl -n test-simple-v4-ingress-multi exec pod-server -it -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-server -it -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-1"
 	[ "$status" -eq  "1" ]
-	run kubectl -n test-simple-v4-ingress-multi exec pod-server -it -- sh -c "nft list ruleset | grep multi-ingress-1"
+	run kubectl -n test-simple-v4-ingress-multi exec pod-server -it -- sh -c "nft list ruleset | grep test-multinetwork-policy-simple-2"
 	[ "$status" -eq  "1" ]
 
 	# enable multi-networkpolicy again

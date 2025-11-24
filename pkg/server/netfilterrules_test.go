@@ -787,12 +787,12 @@ func TestApplyPolicyPortsRules(t *testing.T) {
 		},
 	}
 
-	err = nftState.applyPolicyPortsRules(nftState.ingressChain, mockPolicy.Name, []multiv1beta1.MultiNetworkPolicyPort{}, 0)
+	err = nftState.applyPolicyPortsRules(nftState.ingressChain.Name, nftState.ingressChain, mockPolicy.Name, []multiv1beta1.MultiNetworkPolicyPort{}, 0)
 	if err != nil {
 		t.Fatalf("applyPolicyPortsRules() for ingress failed: %v", err)
 	}
 
-	err = nftState.applyPolicyPortsRules(nftState.egressChain, mockPolicy.Name, []multiv1beta1.MultiNetworkPolicyPort{}, 0)
+	err = nftState.applyPolicyPortsRules(nftState.egressChain.Name, nftState.egressChain, mockPolicy.Name, []multiv1beta1.MultiNetworkPolicyPort{}, 0)
 	if err != nil {
 		t.Fatalf("applyPolicyPortsRules() for egress failed: %v", err)
 	}

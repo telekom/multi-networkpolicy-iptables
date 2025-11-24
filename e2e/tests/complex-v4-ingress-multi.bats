@@ -10,7 +10,7 @@ setup() {
 
 	server_net2=$(get_net2_ip "test-complex-v4-ingress-multi" "pod-server")
 	pod_client_a_net1=$(get_net1_ip "test-complex-v4-ingress-multi" "pod-client-a")
-  pod_client_a_net2=$(get_net2_ip "test-complex-v4-ingress-multi" "pod-client-a")
+	pod_client_a_net2=$(get_net2_ip "test-complex-v4-ingress-multi" "pod-client-a")
 	pod_client_b_net1=$(get_net1_ip "test-complex-v4-ingress-multi" "pod-client-b")
 	pod_client_b_net2=$(get_net2_ip "test-complex-v4-ingress-multi" "pod-client-b")
 }

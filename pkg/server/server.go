@@ -625,7 +625,7 @@ func (s *Server) applyPolicyRulesForPodAndFamily(pod *v1.Pod, podInfo *controlle
 			}
 		}
 		if err := nftState.applyDropRemaining(nftState.ingressChain, forceUpdate); err != nil {
-			klog.Errorf("failed to apply drop remaining ingress rules: %v", err)
+			klog.Errorf("failed to apply drop-remaining ingress rules: %v", err)
 		}
 	}
 
@@ -644,7 +644,7 @@ func (s *Server) applyPolicyRulesForPodAndFamily(pod *v1.Pod, podInfo *controlle
 			}
 		}
 		if err := nftState.applyDropRemaining(nftState.egressChain, forceUpdate); err != nil {
-			klog.Errorf("failed to apply drop remaining egress rules: %v", err)
+			klog.Errorf("failed to apply drop-remaining egress rules: %v", err)
 		}
 	}
 	if err := nftState.nft.Flush(); err != nil {
