@@ -846,7 +846,7 @@ func (n *nftState) applyPodInterfaceRules(chain, policyChain *nftables.Chain, po
 	// -A MULTI-INGRESS -m comment --comment "policy:policy1 net-attach-def:net-attach-def1" -i net1 -j MULTI-INGRESS-0
 	// -A MULTI-INGRESS -m mark --mark 0x30000/0x30000 -j RETURN
 
-	klog.V(8).Infof("applying pod interface:%s [%q] polcy %q chain: %s", podInterface.InterfaceName, podInterface.InterfaceType, policyNamespacedName(policy), policyChain.Name)
+	klog.V(8).Infof("applying pod interface:%s [%q] policy %q chain: %s", podInterface.InterfaceName, podInterface.InterfaceType, policyNamespacedName(policy), policyChain.Name)
 
 	return n.updateRule(&nftables.Rule{
 		Table:    n.filter,
@@ -1631,11 +1631,10 @@ func (n *nftState) applyPolicyPortsRules(chain *nftables.Chain, policyName strin
 }
 
 // s *Server, podInfo *controllers.PodInfo, pIndex, iIndex int, from []multiv1beta1.MultiNetworkPolicyPeer, policyNetworks []string
-func (n *nftState) applyPodRules(s *Server, chain *nftables.Chain, podInfo *controllers.PodInfo,
-	idx int, policy *multiv1beta1.MultiNetworkPolicy, policyNetworks []string) (bool, error) {
+func (n *nftState) applyPodRules(s *Server, chain *nftables.Chain, podInfo *controllers.PodInfo, policy *multiv1beta1.MultiNetworkPolicy, policyNetworks []string) (bool, error) {
 	// add chain inet filter <chainName>-<idx>
 	policyChain, err := n.addChain(&nftables.Chain{
-		Name:  fmt.Sprintf("%s-%d", chain.Name, idx),
+		Name:  fmt.Sprintf("%s-%s", chain.Name, policyNamespacedName(policy)),
 		Table: n.filter,
 	})
 	if err != nil {
@@ -1703,7 +1702,7 @@ func (n *nftState) addChain(chain *nftables.Chain) (*nftables.Chain, error) {
 	if (err != nil && errors.Is(err, os.ErrNotExist)) || existingChain == nil {
 		klog.V(8).Infof("adding chain %q", chain.Name)
 		c = n.nft.AddChain(chain)
-	} else if err != nil {
+	} else if err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("failed to configure chain %q in table %q: %w", chain.Name, chain.Table.Name, err)
 	} else {
 		c = existingChain

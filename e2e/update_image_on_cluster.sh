@@ -8,7 +8,7 @@ IMAGE="localhost:5000/multi-networkpolicy-nftables:e2e"
 
 $OCI_BIN build -t ${IMAGE} ${E2E}/..
 kind load docker-image ${IMAGE}
-new_image_with_digest=`${OCI_BIN} inspect --format='{{index .RepoDigests 0}}' ${IMAGE}`
+new_image_with_digest=`${OCI_BIN} inspect --format='{{ .Id }}' ${IMAGE}`
 
-# kubectl set image -n kube-system ds/multi-networkpolicy-ds-amd64 multi-networkpolicy=${new_image_with_digest}
-# kubectl delete pod $(kubectl get pod -Ao wide | grep multi-networkpolicy | grep kind-worker | awk '{print "-n " $1 " " $2}')
+kubectl set image -n kube-system ds/multi-networkpolicy-ds-amd64 multi-networkpolicy=${new_image_with_digest}
+kubectl delete pod $(kubectl get pod -Ao wide | grep multi-networkpolicy | grep kind-worker | awk '{print "-n " $1 " " $2}')
