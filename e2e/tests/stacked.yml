@@ -38,6 +38,7 @@ metadata:
     app: test-stacked
     name: pod-server
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -57,6 +58,7 @@ metadata:
     app: test-stacked
     name: pod-client-a
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -76,6 +78,7 @@ metadata:
     app: test-stacked
     name: pod-client-b
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -95,6 +98,7 @@ metadata:
     app: test-stacked
     name: pod-client-c
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
