@@ -327,9 +327,10 @@ func (n *nftState) updateRule(rule *nftables.Rule, action func(r *nftables.Rule)
 
 	isNew := false
 	if existingRule != nil && !forceUpdate {
+		klog.V(10).Infof("found rule comment:%q chain:%s", comment, rule.Chain.Name)
 		rule = existingRule
 	} else if existingRule != nil {
-		klog.V(8).Infof("forcing rule update %q", comment)
+		klog.V(8).Infof("forcing rule update comment:%q chain:%s", comment, rule.Chain.Name)
 		counterCopied := false
 		for i := range existingRule.Exprs {
 			if _, ok := existingRule.Exprs[i].(*expr.Counter); ok {
@@ -351,14 +352,14 @@ func (n *nftState) updateRule(rule *nftables.Rule, action func(r *nftables.Rule)
 		}
 		action(rule)
 	} else {
-		klog.V(8).Infof("adding rule %q", comment)
+		klog.V(8).Infof("adding rule comment:%q chain:%s", comment, rule.Chain.Name)
 		action(rule)
 		isNew = true
 	}
 
 	key, err := hash(rule)
 	if err != nil {
-		return isNew, fmt.Errorf("failed to get hash for rule %q: %w", comment, err)
+		return isNew, fmt.Errorf("failed to get hash for rule comment:%q: %w", comment, err)
 	}
 	n.rules[key] = rule
 
@@ -847,7 +848,7 @@ func userDataComment(comment string) []byte {
 	return userdata.AppendString([]byte{}, userdata.TypeComment, comment)
 }
 
-func (n *nftState) applyPodInterfaceRules(policyChainName string, chain, policyChain *nftables.Chain, policy *multiv1beta1.MultiNetworkPolicy, podInterface controllers.InterfaceInfo) (bool, error) {
+func (n *nftState) applyPodInterfaceRules(chain, policyChain *nftables.Chain, policy *multiv1beta1.MultiNetworkPolicy, podInterface controllers.InterfaceInfo) (bool, error) {
 	// add rule to jump to MULTI-INGRESS-<idx> from MULTI-INGRESS
 	// -A MULTI-INGRESS -m comment --comment "policy:policy1 net-attach-def:net-attach-def1" -i net1 -j MULTI-INGRESS-0
 	// -A MULTI-INGRESS -m mark --mark 0x30000/0x30000 -j RETURN
@@ -857,9 +858,9 @@ func (n *nftState) applyPodInterfaceRules(policyChainName string, chain, policyC
 	return n.updateRule(&nftables.Rule{
 		Table:    n.filter,
 		Chain:    chain,
-		UserData: userDataComment(fmt.Sprintf("policy:%s, name:%s, net-attach-def:%s, interface:%s, cni:%s, jump:%s", policyNamespacedName(policy), policyChainName, podInterface.NetattachName, podInterface.InterfaceName, podInterface.InterfaceType, policyChain.Name)),
+		UserData: userDataComment(fmt.Sprintf("policy:%s, name:%s, net-attach-def:%s, interface:%s, cni:%s, jump:%s", policyNamespacedName(policy), chain.Name, podInterface.NetattachName, podInterface.InterfaceName, podInterface.InterfaceType, policyChain.Name)),
 		Exprs: []expr.Any{
-			&expr.Meta{Key: getMetaKeyInterface(policyChainName), Register: 0x1},
+			&expr.Meta{Key: getMetaKeyInterface(chain.Name), Register: 0x1},
 			&expr.Cmp{
 				Register: 0x1,
 				Op:       expr.CmpOpEq,
@@ -1653,7 +1654,7 @@ func (n *nftState) applyPodRules(s *Server, chain *nftables.Chain, podInfo *cont
 	newRules := false
 	for _, podIntf := range podInfo.Interfaces {
 		if podIntf.CheckPolicyNetwork(policyNetworks) {
-			newRule, err := n.applyPodInterfaceRules(policyChainName, chain, policyChain, policy, podIntf)
+			newRule, err := n.applyPodInterfaceRules(chain, policyChain, policy, podIntf)
 			if err != nil {
 				return newRules, fmt.Errorf("failed to apply pod interface rules for policy %q: %v", policyNamespacedName(policy), err)
 			}
