@@ -24,13 +24,13 @@ setup() {
 }
 
 @test "check generated nft rules" {
-	run kubectl -n test-ipblock exec pod-server -it -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-ipblock exec pod-server -it -- sh -c "nft list ruleset | grep testnetwork-policy-ipblock-1"
 	[ "$status" -eq  "0" ]
-	run kubectl -n test-ipblock exec pod-client-a -it -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-ipblock exec pod-client-a -it -- sh -c "nft list ruleset | grep testnetwork-policy-ipblock-1"
 	[ "$status" -eq  "1" ]
-	run kubectl -n test-ipblock exec pod-client-b -it -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-ipblock exec pod-client-b -it -- sh -c "nft list ruleset | grep testnetwork-policy-ipblock-1"
 	[ "$status" -eq  "1" ]
-	run kubectl -n test-ipblock exec pod-client-c -it -- sh -c "nft list ruleset | grep multi-ingress-0"
+	run kubectl -n test-ipblock exec pod-client-c -it -- sh -c "nft list ruleset | grep testnetwork-policy-ipblock-1"
 	[ "$status" -eq  "1" ]
 }
 
