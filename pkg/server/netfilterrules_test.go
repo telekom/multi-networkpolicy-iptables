@@ -11,6 +11,7 @@ import (
 	nftables "github.com/google/nftables"
 	"github.com/google/nftables/binaryutil"
 	"github.com/google/nftables/expr"
+	"github.com/google/nftables/userdata"
 	multiv1beta1 "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	multifake "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/fake"
 	netdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -415,16 +416,16 @@ func TestApplyPodRules(t *testing.T) {
 			t.Fatalf("pod_interfaces set does not have the expected number of elements: 3 != %d", len(elements))
 		}
 
-		ingressChain0 := fmt.Sprintf("%s-%d", ingressChain, 0)
-		ingressPortChain := fmt.Sprintf("%s-ports-0", ingressChain0)
-		ingressPeerChain := fmt.Sprintf("%s-peers-0", ingressChain0)
+		ingressChain0 := fmt.Sprintf("%s-%s", ingressChain, policyRuleNamespacedName(mockPolicy))
+		ingressPortChain := fmt.Sprintf("%s-%s-0", ingressChain0, portsChainSuffix)
+		ingressPeerChain := fmt.Sprintf("%s-%s-0", ingressChain0, peersChainSuffix)
 		if err := verifyVerdicts(c, filterTable, ingressChain0, ingressPortChain, ingressPeerChain); err != nil {
 			t.Fatal(err.Error())
 		}
 
-		egressChain0 := fmt.Sprintf("%s-%d", egressChain, 0)
-		egressPortChain := fmt.Sprintf("%s-ports-0", egressChain0)
-		egressPeerChain := fmt.Sprintf("%s-peers-0", egressChain0)
+		egressChain0 := fmt.Sprintf("%s-%s", egressChain, policyRuleNamespacedName(mockPolicy))
+		egressPortChain := fmt.Sprintf("%s-%s-0", egressChain0, portsChainSuffix)
+		egressPeerChain := fmt.Sprintf("%s-%s-0", egressChain0, peersChainSuffix)
 		if err := verifyVerdicts(c, filterTable, egressChain0, egressPortChain, egressPeerChain); err != nil {
 			t.Fatal(err.Error())
 		}
@@ -642,16 +643,16 @@ func TestApplyPodRulesNoPorts(t *testing.T) {
 			t.Fatalf("pod_interfaces set does not have the expected number of elements: 3 != %d", len(elements))
 		}
 
-		ingressChain0 := fmt.Sprintf("%s-%d", ingressChain, 0)
-		ingressPortChain := fmt.Sprintf("%s-ports-0", ingressChain0)
-		ingressPeerChain := fmt.Sprintf("%s-peers-0", ingressChain0)
+		ingressChain0 := fmt.Sprintf("%s-%s", ingressChain, policyRuleNamespacedName(mockPolicy))
+		ingressPortChain := fmt.Sprintf("%s-%s-0", ingressChain0, portsChainSuffix)
+		ingressPeerChain := fmt.Sprintf("%s-%s-0", ingressChain0, peersChainSuffix)
 		if err := verifyVerdicts(c, filterTable, ingressChain0, ingressPortChain, ingressPeerChain); err != nil {
 			t.Fatal(err.Error())
 		}
 
-		egressChain0 := fmt.Sprintf("%s-%d", egressChain, 0)
-		egressPortChain := fmt.Sprintf("%s-ports-0", egressChain0)
-		egressPeerChain := fmt.Sprintf("%s-peers-0", egressChain0)
+		egressChain0 := fmt.Sprintf("%s-%s", egressChain, policyRuleNamespacedName(mockPolicy))
+		egressPortChain := fmt.Sprintf("%s-%s-0", egressChain0, portsChainSuffix)
+		egressPeerChain := fmt.Sprintf("%s-%s-0", egressChain0, peersChainSuffix)
 		if err := verifyVerdicts(c, filterTable, egressChain0, egressPortChain, egressPeerChain); err != nil {
 			t.Fatal(err.Error())
 		}
@@ -799,9 +800,8 @@ func TestApplyPolicyPortsRules(t *testing.T) {
 
 	nftState.nft.Flush()
 
-	ingressPortChain := fmt.Sprintf("%s-ports-0", ingressChain)
-
-	egressPortChain := fmt.Sprintf("%s-ports-0", egressChain)
+	ingressPortChain := fmt.Sprintf("%s-%s-0", ingressChain, portsChainSuffix)
+	egressPortChain := fmt.Sprintf("%s-%s-0", egressChain, portsChainSuffix)
 
 	check := func() bool {
 		filterTable, err := c.ListTableOfFamily(nftState.filter.Name, nftables.TableFamilyINet)
@@ -890,20 +890,63 @@ func checkPort(port *testPort, start, end uint16) error {
 	return nil
 }
 
+func getChainByNameInComment(c *nftables.Conn, table *nftables.Table, chainName string) (string, error) {
+	chains, err := c.ListChainsOfTableFamily(table.Family)
+	if err != nil {
+		return "", fmt.Errorf("failed to get objects from table %q: %s", table.Name, err.Error())
+	}
+	commentChainName := fmt.Sprintf("name:%s,", chainName)
+	for _, chain := range chains {
+		if chain.Table.Name != table.Name {
+			continue
+		}
+
+		rules, err := c.GetRules(table, chain)
+		if err != nil {
+			return "", fmt.Errorf("failed to get rules from chain %q in table %q: %s", chain.Name, table.Name, err.Error())
+		}
+		for _, rule := range rules {
+			comment, ok := userdata.GetString(rule.UserData, userdata.TypeComment)
+			if !ok {
+				return "", fmt.Errorf("failed to get comment from rule in table %q", table.Name)
+			}
+			if strings.Contains(comment, commentChainName) {
+				return rule.Chain.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("chain with name %q not found in table %q", chainName, table.Name)
+}
+
 func verifyVerdicts(c *nftables.Conn, table *nftables.Table, chain, portChain, peerChain string) error {
+	chainName, err := getChainByNameInComment(c, table, chain)
+	if err != nil {
+		return fmt.Errorf("failed to get multi-network-policy chain %q: %s", chain, err.Error())
+	}
+	portChainName, err := getChainByNameInComment(c, table, portChain)
+	if err != nil {
+		return fmt.Errorf("failed to get multi-network-policy ports chain %q: %s", portChain, err.Error())
+	}
+	peerChainName, err := getChainByNameInComment(c, table, peerChain)
+	if err != nil {
+		return fmt.Errorf("failed to get multi-network-policy peers chain %q: %s", peerChain, err.Error())
+	}
 	rules, err := c.GetRules(table, &nftables.Chain{
-		Name: chain,
+		Name: chainName,
 	})
+	if err != nil {
+		return fmt.Errorf("failed to get ingress pod rules: %s", err.Error())
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get egress pod rules: %s", err.Error())
 	}
 
-	if !checkVerdictPresence(rules, portChain) {
-		return fmt.Errorf("chain %q does not contain %q verdict", chain, portChain)
+	if !checkVerdictPresence(rules, portChainName) {
+		return fmt.Errorf("chain %q does not contain %q verdict [%v]", chain, portChain, rules)
 	}
 
-	if !checkVerdictPresence(rules, peerChain) {
-		return fmt.Errorf("chain %q does not contain %q verdict", chain, peerChain)
+	if !checkVerdictPresence(rules, peerChainName) {
+		return fmt.Errorf("chain %q does not contain %q verdict [%v]", chain, peerChain, rules)
 	}
 
 	return nil
