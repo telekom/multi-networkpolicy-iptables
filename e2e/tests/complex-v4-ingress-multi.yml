@@ -1,0 +1,239 @@
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: dmz-0
+  namespace: default
+spec:
+  config: |- 
+    {
+      "type": "",
+      "cniVersion": "0.4.0",
+      "name": "dmz-0",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "mode": "l2",
+          "ipam": {
+            "type": "static",
+            "addresses": [
+              {
+                "address": "2.2.10.3/24",
+                "gateway": "2.2.10.1"
+              }
+            ],
+            "routes": [
+              {
+                "dst": "2.2.10.0/24"
+              }
+            ],
+            "gateway": "2.2.10.1"
+          }
+        }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: dmz-1
+  namespace: default
+spec:
+  config: |-
+    {
+      "type": "",
+      "cniVersion": "0.4.0",
+      "name": "dmz-1",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "mode": "l2",
+          "ipam": {
+            "type": "static",
+            "addresses": [
+              {
+                "address": "2.2.10.4/24",
+                "gateway": "2.2.10.1"
+              }
+            ],
+            "routes": [
+              {
+                "dst": "2.2.10.0/24"
+              }
+            ],
+            "gateway": "2.2.10.1"
+          }
+        }
+      ]
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: mz
+  namespace: default
+spec:
+  config: |-
+    {
+      "type": "",
+      "cniVersion": "0.4.0",
+      "name": "mz",
+      "plugins": [
+        {
+          "type": "ipvlan",
+          "mode": "l2",
+          "ipam": {
+            "type": "static",
+            "routes": [
+              {
+                "dst": "3.3.10.0/24"
+              }
+            ],
+            "gateway": "3.3.10.1"
+          }
+        }
+      ]
+    }
+---
+# namespace for MultiNetworkPolicy 
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: test-complex-v4-ingress-multi
+---
+# Pods
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-server
+  namespace: test-complex-v4-ingress-multi
+  labels:
+    app: test-complex-v4-ingress-multi
+    name: pod-server
+  annotations:
+    k8s.v1.cni.cncf.io/networks: |
+      [
+        {
+          "name": "mz",
+          "namespace": "default",
+          "ips": [
+            "3.3.10.2/24"
+          ],
+          "interface": "net2"
+        }
+      ]
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: ipvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["nc", "-klp", "5555"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-client-a
+  namespace: test-complex-v4-ingress-multi
+  labels:
+    app: test-complex-v4-ingress-multi
+    name: pod-client-a
+  annotations:
+    k8s.v1.cni.cncf.io/networks: |
+      [
+        {
+          "name": "dmz-0",
+          "namespace": "default",
+          "interface": "net1"
+        },
+        {
+          "name": "mz",
+          "namespace": "default",
+          "ips": [
+            "3.3.10.3/24"
+          ],
+          "interface": "net2"
+        }
+      ]
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: ipvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["nc", "-klp", "5555"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-client-b
+  namespace: test-complex-v4-ingress-multi
+  labels:
+    app: test-complex-v4-ingress-multi
+    name: pod-client-b
+  annotations:
+    k8s.v1.cni.cncf.io/networks: |
+      [
+        {
+          "name": "dmz-1",
+          "namespace": "default",
+          "interface": "net1"
+        },
+        {
+          "name": "mz",
+          "namespace": "default",
+          "ips": [
+            "3.3.10.4/24"
+          ],
+          "interface": "net2"
+        }
+      ]
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: ipvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["nc", "-klp", "5555"]
+    securityContext:
+      privileged: true
+---
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: test-complex-v4-ingress-multi-policy-1
+  namespace: test-complex-v4-ingress-multi
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: default/mz
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - port: 5555
+---
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: test-complex-v4-ingress-multi-policy-0
+  namespace: test-complex-v4-ingress-multi
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: default/dmz-0, default/dmz-1
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - port: 5556

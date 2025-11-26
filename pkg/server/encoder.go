@@ -73,5 +73,5 @@ func hash(data any) (string, error) {
 		return "", fmt.Errorf("failed to generate hash: %w", err)
 	}
 
-	return fmt.Sprintf("%d", h.Sum32()), nil
+	return fmt.Sprintf("%x", h.Sum32()), nil
 }

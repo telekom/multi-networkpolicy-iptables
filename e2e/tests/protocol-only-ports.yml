@@ -39,6 +39,7 @@ metadata:
     app: test-protocol-only-ports
     name: pod-a
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: netcat-tcp
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -64,6 +65,7 @@ metadata:
     app: test-protocol-only-ports
     name: pod-b
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: netcat-tcp
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test

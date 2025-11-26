@@ -612,8 +612,8 @@ func (s *Server) applyPolicyRulesForPodAndFamily(pod *v1.Pod, podInfo *controlle
 
 	if len(ingressPolicies) > 0 {
 		forceUpdate := false
-		for idx, policy := range ingressPolicies {
-			newRules, err := nftState.applyPodRules(s, nftState.ingressChain, podInfo, idx, policy.policy, policy.policyNetworks)
+		for _, policy := range ingressPolicies {
+			newRules, err := nftState.applyPodRules(s, nftState.ingressChain, podInfo, policy.policy, policy.policyNetworks)
 			if err != nil {
 				klog.Errorf("failed to apply pod ingress rules: %v", err)
 			}
@@ -625,14 +625,14 @@ func (s *Server) applyPolicyRulesForPodAndFamily(pod *v1.Pod, podInfo *controlle
 			}
 		}
 		if err := nftState.applyDropRemaining(nftState.ingressChain, forceUpdate); err != nil {
-			klog.Errorf("failed to apply drop remaining ingress rules: %v", err)
+			klog.Errorf("failed to apply drop-remaining ingress rules: %v", err)
 		}
 	}
 
 	if len(egressPolicies) > 0 {
 		forceUpdate := false
-		for idx, policy := range egressPolicies {
-			newRules, err := nftState.applyPodRules(s, nftState.egressChain, podInfo, idx, policy.policy, policy.policyNetworks)
+		for _, policy := range egressPolicies {
+			newRules, err := nftState.applyPodRules(s, nftState.egressChain, podInfo, policy.policy, policy.policyNetworks)
 			if err != nil {
 				klog.Errorf("failed to apply pod egress rules: %v", err)
 			}
@@ -644,7 +644,7 @@ func (s *Server) applyPolicyRulesForPodAndFamily(pod *v1.Pod, podInfo *controlle
 			}
 		}
 		if err := nftState.applyDropRemaining(nftState.egressChain, forceUpdate); err != nil {
-			klog.Errorf("failed to apply drop remaining egress rules: %v", err)
+			klog.Errorf("failed to apply drop-remaining egress rules: %v", err)
 		}
 	}
 	if err := nftState.nft.Flush(); err != nil {

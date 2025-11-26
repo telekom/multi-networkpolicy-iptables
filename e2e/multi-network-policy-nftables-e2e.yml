@@ -135,7 +135,7 @@ spec:
         # uncomment if you want to accept ICMP/ICMPv6 traffic
         # - "--accept-icmp"
         # - "--accept-icmpv6"
-        - "--network-plugins=macvlan,bond"
+        - "--network-plugins=macvlan,bond,ipvlan"
         - -v=10
         resources:
           requests:

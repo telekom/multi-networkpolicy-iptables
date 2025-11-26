@@ -64,6 +64,7 @@ metadata:
   labels:
     name: pod-a-1
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -81,6 +82,7 @@ metadata:
   labels:
     name: pod-a-2
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -99,6 +101,7 @@ metadata:
   labels:
     name: pod-b-1
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
@@ -116,6 +119,7 @@ metadata:
   labels:
     name: pod-b-2
 spec:
+  terminationGracePeriodSeconds: 0
   containers:
   - name: macvlan-worker1
     image: localhost:5000/multi-networkpolicy-nftables:e2e-test
