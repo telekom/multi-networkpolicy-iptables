@@ -16,13 +16,14 @@ jobs:
     env:
       GO111MODULE: on
     steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
     - name: Install Go
       uses: actions/setup-go@v5
       with:
         go-version: '${{ matrix.go-version }}'
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
+        cache: true
 
     - name: Build
       env:

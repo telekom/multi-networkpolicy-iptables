@@ -14,13 +14,14 @@ jobs:
         os: [ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
     - name: Install Go
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-
-    - name: Checkout code
-      uses: actions/checkout@v4
+        cache: true
 
     - name: Run Revive Action by pulling pre-built image
       uses: docker://morphy/revive-action:v2
