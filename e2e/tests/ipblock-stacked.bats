@@ -19,8 +19,8 @@ setup() {
 	run kubectl -n test-ipblock-stacked wait --for=condition=ready -l app=test-ipblock-stacked pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 5
+	wait_for_nft_rules "test-ipblock-stacked" "pod-server" "testnetwork-policy-ipblock-stacked-1"
+	sleep 2
 }
 
 @test "check generated nftables rules" {

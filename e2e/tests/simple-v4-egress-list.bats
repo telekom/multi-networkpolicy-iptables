@@ -22,8 +22,7 @@ setup() {
 	run kubectl -n test-simple-v4-egress-list wait --for=condition=ready -l app=test-simple-v4-egress-list pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 5
+	wait_for_nft_rules "test-simple-v4-egress-list" "pod-server" "test-multinetwork-policy-simple-1"
 }
 
 @test "test-simple-v4-egress-list check client-a -> server" {

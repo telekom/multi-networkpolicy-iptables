@@ -22,8 +22,7 @@ setup() {
 	run kubectl -n test-simple-v6-ingress wait --for=condition=ready -l app=test-simple-v6-ingress pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 5
+	wait_for_nft_rules "test-simple-v6-ingress" "pod-server" "test-multinetwork-policy-simple-1"
 }
 
 @test "check generated nft rules" {
@@ -74,8 +73,7 @@ setup() {
 
 	# enable multi-networkpolicy again
 	kubectl -n kube-system patch daemonsets multi-networkpolicy-ds-amd64 --type json -p='[{"op": "remove", "path": "/spec/template/spec/nodeSelector/non-existing"}]'
-	sleep 5
-	kubectl -n kube-system wait --for=condition=ready -l app=multi-networkpolicy pod --timeout=${kubewait_timeout}
+	kubectl -n kube-system rollout status daemonset/multi-networkpolicy-ds-amd64 --timeout=${kubewait_timeout}
 }
 
 @test "cleanup environments" {

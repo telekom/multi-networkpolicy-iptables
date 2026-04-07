@@ -28,8 +28,7 @@ setup() {
 	run kubectl -n test-namespace-b wait --all --for=condition=ready pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for the nftables to be synced
-	sleep 3
+	wait_for_nft_rules "test-namespace-a" "pod-a-1" "test-multinetwork-policy-namespace-a"
 }
 
 @test "Allowed connectivity" {
@@ -82,5 +81,4 @@ setup() {
 	run kubectl -n test-namespace-b wait --all --for=delete pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	sleep 5
 }

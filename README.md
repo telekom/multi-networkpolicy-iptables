@@ -1,17 +1,40 @@
 # multi-networkpolicy-nftables
-[![build](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/build.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/build.yml)[![test](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/test.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/test.yml)
+
+[![build](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/build.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/build.yml)
+[![test](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/test.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/test.yml)
+[![lint](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/golangci-lint.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/golangci-lint.yml)
+[![e2e](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/kind-e2e.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/kind-e2e.yml)
+[![CodeQL](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/codeql.yml/badge.svg)](https://github.com/telekom/multi-networkpolicy-nftables/actions/workflows/codeql.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/telekom/multi-networkpolicy-nftables)](https://goreportcard.com/report/github.com/telekom/multi-networkpolicy-nftables)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 [multi-networkpolicy](https://github.com/telekom/multi-networkpolicy) implementation with nftables
 
 ## Current Status of the Repository
 
-It is now actively developping hence not stable yet. Bug report and feature request are welcome.
+It is now being actively developed and is not stable yet. Bug reports and feature requests are welcome.
 
 ## Description
 
-Kubernetes provides [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) for network security. Currently net-attach-def does not support Network Policies because net-attach-def is CRD, user defined resources, outside of Kubernetes.
-multi-network policy implements Network Policiy functionality for net-attach-def, by nftables and provies network security for net-attach-def networks.
+Kubernetes provides [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) for network security. Currently net-attach-def does not support Network Policies because net-attach-def is a CRD (user-defined resource) outside of Kubernetes.
+multi-networkpolicy implements Network Policy functionality for net-attach-def, by nftables and provides network security for net-attach-def networks.
 
+## Architecture
+
+multi-networkpolicy-nftables runs as a DaemonSet on each Kubernetes node. It watches for MultiNetworkPolicy custom resources and translates them into nftables rules applied directly in pod network namespaces.
+
+### Components
+
+- **Controllers** (`pkg/controllers/`): Watch Kubernetes resources (Pods, Namespaces, MultiNetworkPolicies, NetworkAttachmentDefinitions) using client-go informers.
+- **Server** (`pkg/server/`): Core orchestration and sync loop that coordinates controllers and triggers rule generation.
+- **Rule Generator** (`pkg/server/netfilterrules.go`): Translates MultiNetworkPolicy specs into nftables rule sets using the google/nftables library.
+
+### How It Works
+
+1. The daemon watches for changes to MultiNetworkPolicy resources and related objects (Pods, Namespaces, NetworkAttachmentDefinitions).
+2. On each sync cycle, it determines which pods are affected by which policies.
+3. For each affected pod, it enters the pod's network namespace and applies nftables rules that enforce the specified ingress/egress policies.
+4. When policies are removed, the corresponding nftables rules are cleaned up automatically.
 
 ![Multi NetworkPolicy Overview](docs/images/multi-networkpolicy-overview.png)
 
@@ -26,7 +49,7 @@ $ kubectl create -f scheme.yml
 customresourcedefinition.apiextensions.k8s.io/multi-networkpolicies.k8s.cni.cncf.io created
 ```
 
-Deploy multi-networkpolicie-nftables into Kubernetes.
+Deploy multi-networkpolicy-nftables into Kubernetes.
 
 ```
 $ git clone https://github.com/telekom/multi-networkpolicy-nftables
@@ -40,7 +63,7 @@ daemonset.apps/multi-networkpolicy-ds-amd64 created
 
 ## Requirements
 
-This project leverages `nftables` hence the netfilter module need to be loaded on the container host:
+This project leverages `nftables` hence the netfilter module needs to be loaded on the container host:
 
 ```
 # modprobe nf_ct
@@ -51,18 +74,53 @@ This project leverages `nftables` hence the netfilter module need to be loaded o
 
 See [Configurations](docs/configurations.md).
 
-## Demo
+## Development
 
-(TBD)
+### Prerequisites
 
-### MultiNetworkPolicy DaemonSet
+- Go 1.24+ (see go.mod for exact version requirements)
+- Linux with nftables support (for tests)
+- Docker (for container image builds)
+- [kind](https://kind.sigs.k8s.io/) (for e2e tests)
+- [Bats](https://bats-core.readthedocs.io/) (for e2e tests; install via `brew install bats-core` or your package manager)
 
-MultiNetworkPolicy creates DaemonSet and it runs `multi-networkpolicy-nftables` for each node. `multi-networkpolicy-nftables` watches MultiNetworkPolicy object and creates nftables rules into 'pod's network namespace', not container host and the nftables rules filters packets to interface, based on MultiNetworkPolicy.
+### Build
 
-## TODO
+```bash
+go build ./cmd/multi-networkpolicy-nftables/
+```
 
-* Bugfixing
-* (TBD)
+### Test
+
+Unit tests require root privileges for nftables operations:
+
+```bash
+sudo modprobe nft_ct
+sudo go test -v ./...
+```
+
+### Lint
+
+```bash
+golangci-lint run
+```
+
+### E2E Tests
+
+End-to-end tests use kind to create a cluster with Calico, Multus, and bond-cni:
+
+```bash
+cd e2e
+./get_tools.sh
+./setup_cluster.sh
+./run_all_tests.sh
+```
+
+## Roadmap
+
+- Improved e2e test coverage and reliability
+- Enhanced CI/CD pipeline with caching and security scanning
+- Performance benchmarks for rule generation
 
 ## Contact Us
 

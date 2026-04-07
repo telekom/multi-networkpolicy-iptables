@@ -21,7 +21,8 @@ setup() {
 	run kubectl -n test-ingress-ns-selector-no-pods wait --for=condition=ready -l app=test-ingress-ns-selector-no-pods pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	sleep 5
+	wait_for_nft_rules "test-ingress-ns-selector-no-pods" "pod-server" "policy-test-ingress-ns-selector-no-pods"
+	sleep 2
 }
 
 @test "test-ingress-ns-selector-no-pods check client-a -> server" {

@@ -16,8 +16,8 @@ setup() {
 	run kubectl -n bond-testing wait --for=condition=ready -l app=bond-testing pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 5
+	wait_for_nft_rules "bond-testing" "pod-a" "test-multinetwork-policy-bond"
+	sleep 2
 }
 
 @test "bond-testing check pod-b -> pod-a" {

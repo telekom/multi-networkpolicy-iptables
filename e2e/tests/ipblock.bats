@@ -19,8 +19,7 @@ setup() {
 	run kubectl -n test-ipblock wait --for=condition=ready -l app=test-ipblock pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 5
+	wait_for_nft_rules "test-ipblock" "pod-server" "testnetwork-policy-ipblock-1"
 }
 
 @test "check generated nft rules" {

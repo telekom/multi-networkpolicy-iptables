@@ -136,7 +136,7 @@ func bootstrapNetfilterChains(nftState *nftState) {
 func addTable(nft *nftables.Conn, table *nftables.Table) (*nftables.Table, error) {
 	t, err := nft.ListTableOfFamily(table.Name, table.Family)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("failed to check existance of table %q: %w", table.Name, err)
+		return nil, fmt.Errorf("failed to check existence of table %q: %w", table.Name, err)
 	} else if err != nil && errors.Is(err, os.ErrNotExist) {
 		klog.V(8).Infof("adding table %q", table.Name)
 		t = nft.AddTable(table)
@@ -348,7 +348,7 @@ func (n *nftState) updateRule(rule *nftables.Rule, action func(r *nftables.Rule)
 			}
 		}
 		if err := n.nft.DelRule(existingRule); err != nil {
-			return isNew, fmt.Errorf("failed to delete exsting rule: %w", err)
+			return isNew, fmt.Errorf("failed to delete existing rule: %w", err)
 		}
 		action(rule)
 	} else {
@@ -474,7 +474,7 @@ func (n *nftState) updateSet(set *nftables.Set, elements []nftables.SetElement) 
 
 	klog.V(8).Infof("adding set %q, table %q", set.Name, set.Table.Name)
 	if err := n.nft.AddSet(set, elements); err != nil {
-		return fmt.Errorf("failed to add interface set: %v", err)
+		return fmt.Errorf("failed to add interface set: %w", err)
 	}
 
 	n.sets[fmt.Sprintf("%s-%s", set.Table.Name, set.Name)] = set
@@ -1285,7 +1285,7 @@ func (n *nftState) addIPRule(chainName string, addrs []string, chain *nftables.C
 			&expr.Cmp{
 				Op:       expr.CmpOpEq,
 				Register: 0x1,
-				Data:     []byte{uint8(nfProtocol)},
+				Data:     []byte{nfProtocol},
 			},
 			&expr.Payload{
 				DestRegister: 0x1,
@@ -1544,10 +1544,11 @@ func (n *nftState) applyPolicyPortsRules(chainName string, chain *nftables.Chain
 			if port.Port.IntValue() < 1 || port.Port.IntValue() > math.MaxUint16 {
 				return fmt.Errorf("port %d out of range, must be between 1 and %d", port.Port.IntValue(), math.MaxUint16)
 			}
+			portVal := uint16(port.Port.IntValue()) //nolint:gosec // G115: value validated in range [1, 65535] above
 			portElements = append(portElements, nftables.SetElement{
-				Key: binaryutil.BigEndian.PutUint16(uint16(port.Port.IntValue())),
+				Key: binaryutil.BigEndian.PutUint16(portVal),
 			})
-			if port.EndPort != nil && *port.EndPort > int32(port.Port.IntValue()) {
+			if port.EndPort != nil && *port.EndPort > int32(port.Port.IntValue()) { //nolint:gosec // G115: value validated in range [1, 65535] above
 				if *port.EndPort < 1 || *port.EndPort > 65535 {
 					return fmt.Errorf("port %d out of range, must be between 1 and %d", port.Port.IntValue(), math.MaxUint16)
 				}
@@ -1563,7 +1564,7 @@ func (n *nftState) applyPolicyPortsRules(chainName string, chain *nftables.Chain
 				// e.g. 1000 becomes [1000, 1001)
 				// so we need to add 1 to the port
 				portElements = append(portElements, nftables.SetElement{
-					Key:         binaryutil.BigEndian.PutUint16(uint16(port.Port.IntValue()) + 1),
+					Key:         binaryutil.BigEndian.PutUint16(portVal + 1),
 					IntervalEnd: true,
 				})
 			}
@@ -1765,7 +1766,14 @@ func (n *nftState) cleanupRules(table *nftables.Table) error {
 			for _, rule := range rules {
 				key, err := hash(rule)
 				if err != nil {
-					klog.Warning("failed to get key for rule: %w", err)
+					comment, _ := userdata.GetString(rule.UserData, userdata.TypeComment)
+					klog.Warningf("failed to get key for rule %q in chain %q: %v — deleting as stale", comment, rule.Chain.Name, err)
+					if delErr := n.nft.DelRule(rule); delErr != nil {
+						klog.Errorf("failed to delete unhashable rule %q in chain %q: %v", comment, rule.Chain.Name, delErr)
+					} else {
+						performFlush = true
+					}
+					continue
 				}
 				if _, exists := n.rules[key]; !exists {
 					comment, _ := userdata.GetString(rule.UserData, userdata.TypeComment)

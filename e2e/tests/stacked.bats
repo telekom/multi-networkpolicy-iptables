@@ -19,8 +19,8 @@ setup() {
 	run kubectl -n test-stacked wait --for=condition=ready -l app=test-stacked pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 10
+	wait_for_nft_rules "test-stacked" "pod-server" "testnetwork-policy-stacked-1" 20
+	sleep 2
 }
 
 @test "check generated nft rules" {

@@ -225,11 +225,11 @@ func (pct *PolicyChangeTracker) String() string {
 	return fmt.Sprintf("policyChange: %v", pct.items)
 }
 
-func (pct *PolicyChangeTracker) newPolicyInfo(policy *multiv1beta1.MultiNetworkPolicy) (*PolicyInfo, error) {
+func (pct *PolicyChangeTracker) newPolicyInfo(policy *multiv1beta1.MultiNetworkPolicy) *PolicyInfo {
 	info := &PolicyInfo{
 		Policy: policy,
 	}
-	return info, nil
+	return info
 }
 
 func (pct *PolicyChangeTracker) policyToPolicyMap(policy *multiv1beta1.MultiNetworkPolicy) PolicyMap {
@@ -237,10 +237,7 @@ func (pct *PolicyChangeTracker) policyToPolicyMap(policy *multiv1beta1.MultiNetw
 		return nil
 	}
 	policyMap := make(PolicyMap)
-	policyInfo, err := pct.newPolicyInfo(policy)
-	if err != nil {
-		return nil
-	}
+	policyInfo := pct.newPolicyInfo(policy)
 
 	policyMap[types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}] = *policyInfo
 	return policyMap

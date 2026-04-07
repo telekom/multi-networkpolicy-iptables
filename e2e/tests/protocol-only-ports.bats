@@ -20,8 +20,8 @@ setup() {
 	run kubectl -n test-protocol-only-ports wait --for=condition=ready -l app=test-protocol-only-ports pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	# wait for sync
-	sleep 5
+	wait_for_nft_rules "test-protocol-only-ports" "pod-a" "test-multinetwork-policy-simple-1"
+	sleep 2
 }
 
 @test "test-protocol-only-ports check pod-a -> pod-b TCP" {

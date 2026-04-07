@@ -19,7 +19,7 @@ setup() {
 	run kubectl -n test-ipblock-list wait --for=condition=ready -l app=test-ipblock-list pod --timeout=${kubewait_timeout}
 	[ "$status" -eq  "0" ]
 
-	sleep 5
+	wait_for_nft_rules "test-ipblock-list" "pod-server" "testnetwork-policy-ipblock-1"
 }
 
 @test "test-ipblock-list check client-a" {

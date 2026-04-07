@@ -1,0 +1,10 @@
+.git
+.github
+.gitignore
+.golangci.yaml
+*.md
+LICENSE
+LICENSES/
+e2e/
+hack/
+docs/

@@ -331,7 +331,7 @@ func IsMultiNetworkpolicyTarget(pod *v1.Pod) bool {
 	return true
 }
 
-func (pct *PodChangeTracker) newPodInfo(pod *v1.Pod) (*PodInfo, error) {
+func (pct *PodChangeTracker) newPodInfo(pod *v1.Pod) *PodInfo {
 	var statuses []netdefv1.NetworkStatus
 	var netnsPath string
 	var netifs []InterfaceInfo
@@ -421,7 +421,7 @@ func (pct *PodChangeTracker) newPodInfo(pod *v1.Pod) (*PodInfo, error) {
 		NodeName:      pod.Spec.NodeName,
 		Interfaces:    netifs,
 	}
-	return info, nil
+	return info
 }
 
 // NewPodChangeTracker ...
@@ -459,10 +459,7 @@ func (pct *PodChangeTracker) podToPodMap(pod *v1.Pod) PodMap {
 	}
 
 	podMap := make(PodMap)
-	podinfo, err := pct.newPodInfo(pod)
-	if err != nil {
-		return nil
-	}
+	podinfo := pct.newPodInfo(pod)
 
 	podMap[types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}] = *podinfo
 	return podMap

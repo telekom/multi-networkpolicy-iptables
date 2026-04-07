@@ -6,6 +6,8 @@ on:
       - nftables
   pull_request:
 name: test
+permissions:
+  contents: read
 jobs:
   test:
     strategy:

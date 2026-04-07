@@ -253,8 +253,8 @@ func TestApplyPodRules(t *testing.T) {
 	protocolSCTP := corev1.ProtocolSCTP
 
 	eighty, ninety, fiftythree, oneTwoThreeFour, twoFourSixEight :=
-		intstr.FromInt(80), int32(intstr.FromInt(90).IntVal), intstr.FromInt(53),
-		intstr.FromInt(1234), int32(intstr.FromInt(2468).IntVal)
+		intstr.FromInt(80), intstr.FromInt(90).IntVal, intstr.FromInt(53),
+		intstr.FromInt(1234), intstr.FromInt(2468).IntVal
 
 	mockPolicy := &multiv1beta1.MultiNetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
