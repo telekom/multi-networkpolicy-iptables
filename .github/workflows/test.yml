@@ -38,8 +38,11 @@ jobs:
       run: go env -w GOTOOLCHAIN=go${{ matrix.go-version }}+auto
 
 
+    - name: Load kernel modules
+      run: sudo modprobe nft_ct
+
     - name: Test
-      run: sudo modprobe nft_ct && sudo go test -v -coverprofile=profile.cov ./...
+      run: go test -v -coverprofile=profile.cov ./...
 
     - name: Send coverage
       uses: shogo82148/actions-goveralls@v1
