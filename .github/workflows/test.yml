@@ -42,7 +42,9 @@ jobs:
       run: sudo modprobe nft_ct
 
     - name: Test
-      run: go test -v -coverprofile=profile.cov ./...
+      run: |
+        sudo go test -v -coverprofile=profile.cov ./...
+        sudo chown $(id -u):$(id -g) profile.cov
 
     - name: Send coverage
       uses: shogo82148/actions-goveralls@v1
