@@ -19,6 +19,7 @@ package server
 import (
 	"fmt"
 	"math"
+	"net"
 	"net/netip"
 	"strings"
 	"testing"
@@ -265,6 +266,18 @@ func TestApplyPodRules(t *testing.T) {
 		t.Fatalf("failed to prepare test env: %s", err.Error())
 	}
 
+	// Add an interface matching the selector pods' network attachment name so
+	// applyPolicyPeersRulesSelector can match both the local pod and the
+	// selector target pod (testpod2) against the same policyNetworks list.
+	policyNetAttach := fmt.Sprintf("%s/policy-net-1", testNs)
+	podMockInfo.Interfaces = append(podMockInfo.Interfaces, controllers.InterfaceInfo{
+		NetattachName: policyNetAttach,
+		InterfaceType: "macvlan",
+		InterfaceName: "net1",
+		IPs:           []string{"10.1.1.1"},
+	})
+	policyNetworks := []string{"net1", "net2", policyNetAttach}
+
 	// Define protocol variables to take their addresses
 	protocolTCP := corev1.ProtocolTCP
 	protocolUDP := corev1.ProtocolUDP
@@ -375,7 +388,7 @@ func TestApplyPodRules(t *testing.T) {
 			},
 		},
 	}
-	_, err = nftState.applyPodRules(mockServer, nftState.ingressChain, podMockInfo, mockPolicy, []string{"net1", "net2"})
+	_, err = nftState.applyPodRules(mockServer, nftState.ingressChain, podMockInfo, mockPolicy, policyNetworks)
 	if err != nil {
 		t.Fatalf("applyPodRules() for ingress failed: %v", err)
 	}
@@ -383,7 +396,7 @@ func TestApplyPodRules(t *testing.T) {
 		t.Fatalf("nft flush failed after applying ingress rules: %v", err)
 	}
 
-	_, err = nftState.applyPodRules(mockServer, nftState.egressChain, podMockInfo, mockPolicy, []string{"net1", "net2"})
+	_, err = nftState.applyPodRules(mockServer, nftState.egressChain, podMockInfo, mockPolicy, policyNetworks)
 	if err != nil {
 		t.Fatalf("applyPodRules() for egress failed: %v", err)
 	}
@@ -448,45 +461,173 @@ func TestApplyPodRules(t *testing.T) {
 			t.Fatal(err.Error())
 		}
 
-		ingressPortChainRules, err := c.GetRules(filterTable, &nftables.Chain{
-			Name: ingressPortChain,
-		})
-		if err != nil {
-			t.Fatalf("c.GetRules(%q, %q) failed: %s", filterTable.Name, ingressPortChain, err.Error())
-		}
-
-		for _, r := range ingressPortChainRules {
-			for _, e := range r.Exprs {
-				if el, ok := e.(*expr.Lookup); ok {
-					set, err := c.GetSetByName(filterTable, el.SetName)
-					if err != nil {
-						t.Fatalf("failed to get set %q: %s", el.SetName, err.Error())
-					}
-					port, err := getSetPorts(c, set)
-					if err != nil {
-						t.Fatalf("failed to get port data for set %q: %s", el.SetName, err.Error())
-					}
-
-					var start, end uint16
-					switch port.protocol {
-					case "tcp":
-						start = uint16(eighty.IntVal)
-						end = uint16(ninety)
-					case "udp":
-						start = uint16(fiftythree.IntVal)
-						end = uint16(fiftythree.IntVal)
-					case "sctp":
-						start = uint16(oneTwoThreeFour.IntVal)
-						end = uint16(twoFourSixEight)
-					}
-
-					if err := checkPort(port, start, end); err != nil {
-						t.Fatalf("invalid configuration: %s", err.Error())
+		checkPortChainRules := func(portChainLogicalName string) {
+			portChainActualName, err := getChainByNameInComment(c, filterTable, portChainLogicalName)
+			if err != nil {
+				t.Fatalf("failed to get port chain %q: %s", portChainLogicalName, err.Error())
+			}
+			portChainRules, err := c.GetRules(filterTable, &nftables.Chain{Name: portChainActualName})
+			if err != nil {
+				t.Fatalf("c.GetRules(%q, %q) failed: %s", filterTable.Name, portChainActualName, err.Error())
+			}
+			foundProtocols := make(map[string]bool)
+			for _, r := range portChainRules {
+				for _, e := range r.Exprs {
+					if el, ok := e.(*expr.Lookup); ok {
+						portSet, err := c.GetSetByName(filterTable, el.SetName)
+						if err != nil {
+							t.Fatalf("failed to get set %q: %s", el.SetName, err.Error())
+						}
+						port, err := getSetPorts(c, portSet)
+						if err != nil {
+							t.Fatalf("failed to get port data for set %q: %s", el.SetName, err.Error())
+						}
+						foundProtocols[port.protocol] = true
+						var start, end uint16
+						switch port.protocol {
+						case "tcp":
+							start = uint16(eighty.IntVal)
+							end = uint16(ninety)
+						case "udp":
+							start = uint16(fiftythree.IntVal)
+							end = uint16(fiftythree.IntVal)
+						case "sctp":
+							start = uint16(oneTwoThreeFour.IntVal)
+							end = uint16(twoFourSixEight)
+						}
+						if err := checkPort(port, start, end); err != nil {
+							t.Fatalf("invalid %s port configuration: %s", portChainLogicalName, err.Error())
+						}
 					}
 				}
 			}
-
+			for _, proto := range []string{"tcp", "udp", "sctp"} {
+				if !foundProtocols[proto] {
+					t.Errorf("port chain %q missing expected protocol %s", portChainLogicalName, proto)
+				}
+			}
 		}
+
+		checkPortChainRules(ingressPortChain)
+		checkPortChainRules(egressPortChain)
+
+		checkPeerChainContainsCIDR := func(peerChainLogicalName, cidrStr string) {
+			peerChainActualName, err := getChainByNameInComment(c, filterTable, peerChainLogicalName)
+			if err != nil {
+				t.Fatalf("failed to get peer chain %q: %s", peerChainLogicalName, err.Error())
+			}
+			peerChainRules, err := c.GetRules(filterTable, &nftables.Chain{Name: peerChainActualName})
+			if err != nil {
+				t.Fatalf("c.GetRules(%q, %q) failed: %s", filterTable.Name, peerChainActualName, err.Error())
+			}
+			prefix, err := netip.ParsePrefix(cidrStr)
+			if err != nil {
+				t.Fatalf("failed to parse expected CIDR %q: %v", cidrStr, err)
+			}
+			startKey := prefix.Addr().As16()
+			endBytes := startKey
+			bits := prefix.Bits()
+			for i := bits; i < 128; i++ {
+				endBytes[i/8] |= 1 << uint(7-i%8)
+			}
+			for i := 15; i >= 0; i-- {
+				endBytes[i]++
+				if endBytes[i] != 0 {
+					break
+				}
+			}
+			expectedStartKey := startKey[:]
+			expectedEndKey := endBytes[:]
+
+			foundStart := false
+			foundEnd := false
+			for _, r := range peerChainRules {
+				for _, e := range r.Exprs {
+					if el, ok := e.(*expr.Lookup); ok {
+						peerSet, err := c.GetSetByName(filterTable, el.SetName)
+						if err != nil {
+							t.Fatalf("failed to get peer set %q: %s", el.SetName, err.Error())
+						}
+						setElems, err := c.GetSetElements(peerSet)
+						if err != nil {
+							t.Fatalf("failed to get elements for set %q: %s", el.SetName, err.Error())
+						}
+						for _, elem := range setElems {
+							if !elem.IntervalEnd && strings.EqualFold(
+								fmt.Sprintf("%x", elem.Key),
+								fmt.Sprintf("%x", expectedStartKey),
+							) {
+								foundStart = true
+							}
+							if elem.IntervalEnd && strings.EqualFold(
+								fmt.Sprintf("%x", elem.Key),
+								fmt.Sprintf("%x", expectedEndKey),
+							) {
+								foundEnd = true
+							}
+						}
+					}
+				}
+			}
+			if !foundStart {
+				t.Errorf("peer chain %q does not contain expected CIDR start address for %q", peerChainLogicalName, cidrStr)
+			}
+			if !foundEnd {
+				t.Errorf("peer chain %q does not contain expected CIDR end address for %q", peerChainLogicalName, cidrStr)
+			}
+		}
+
+		checkPeerChainContainsCIDR(ingressPeerChain, "face::/16")
+		checkPeerChainContainsCIDR(egressPeerChain, "badc::/16")
+
+		checkPeerChainContainsIP := func(peerChainLogicalName, expectedIPStr string) {
+			peerChainActualName, err := getChainByNameInComment(c, filterTable, peerChainLogicalName)
+			if err != nil {
+				t.Fatalf("failed to get peer chain %q: %s", peerChainLogicalName, err.Error())
+			}
+			peerChainRules, err := c.GetRules(filterTable, &nftables.Chain{Name: peerChainActualName})
+			if err != nil {
+				t.Fatalf("c.GetRules(%q, %q) failed: %s", filterTable.Name, peerChainActualName, err.Error())
+			}
+			expectedIP := net.ParseIP(expectedIPStr).To4()
+			if expectedIP == nil {
+				expectedIP = net.ParseIP(expectedIPStr).To16()
+			}
+			if expectedIP == nil {
+				t.Fatalf("failed to parse expected IP %q", expectedIPStr)
+			}
+
+			found := false
+			for _, r := range peerChainRules {
+				for _, e := range r.Exprs {
+					if el, ok := e.(*expr.Lookup); ok {
+						peerSet, err := c.GetSetByName(filterTable, el.SetName)
+						if err != nil {
+							t.Fatalf("failed to get peer set %q: %s", el.SetName, err.Error())
+						}
+						setElems, err := c.GetSetElements(peerSet)
+						if err != nil {
+							t.Fatalf("failed to get elements for set %q: %s", el.SetName, err.Error())
+						}
+						for _, elem := range setElems {
+							if !elem.IntervalEnd && strings.EqualFold(
+								fmt.Sprintf("%x", elem.Key),
+								fmt.Sprintf("%x", []byte(expectedIP)),
+							) {
+								found = true
+							}
+						}
+					}
+				}
+			}
+			if !found {
+				t.Errorf("peer chain %q does not contain expected pod selector IP %q (testpod2 app=test2)", peerChainLogicalName, expectedIPStr)
+			}
+		}
+
+		checkPeerChainContainsIP(ingressPeerChain, "10.1.1.2")
+		checkPeerChainContainsIP(egressPeerChain, "10.1.1.2")
+
 		return true
 	}
 
@@ -890,7 +1031,10 @@ func getSetPorts(c *nftables.Conn, set *nftables.Set) (*testPort, error) {
 			start = binaryutil.BigEndian.Uint16(e.Key)
 		}
 	}
-	pname := strings.Split(set.Name, "_")
+	if set.Comment == "" {
+		return nil, fmt.Errorf("set %q has no comment, cannot determine protocol", set.Name)
+	}
+	pname := strings.Split(set.Comment, "_")
 	return &testPort{
 		protocol: pname[len(pname)-1],
 		start:    start,
@@ -1040,6 +1184,7 @@ func NewFakeServer(hostname string) *Server {
 	}
 	podConfig.RegisterEventHandler(server)
 	informerFactory.Start(wait.NeverStop)
+	informerFactory.WaitForCacheSync(wait.NeverStop)
 	go podConfig.Run(wait.NeverStop)
 	return server
 }

@@ -194,7 +194,7 @@ func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (
 
 	bootstrapNetfilterChains(nftState)
 
-	slices.SortStableFunc(podInfo.Interfaces, func(a, b controllers.InterfaceInfo) int {
+	slices.SortFunc(podInfo.Interfaces, func(a, b controllers.InterfaceInfo) int {
 		return strings.Compare(a.InterfaceName, b.InterfaceName)
 	})
 
@@ -224,7 +224,7 @@ func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (
 	}
 
 	if err := nftState.updateSet(nftState.interfaceFilterSet, interfaceSetElements); err != nil {
-		return nftState, fmt.Errorf("failed to update filter set: %w", err)
+		return nftState, fmt.Errorf("failed to update set %q: %w", nftState.interfaceFilterSet.Name, err)
 	}
 
 	inputInterfaceFilterComment := "input-interface-filter"
@@ -277,7 +277,7 @@ func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (
 	}
 
 	if err := nftState.updateSet(nftState.interfaceNatSet, interfaceSetElements); err != nil {
-		return nftState, fmt.Errorf("failed to update NAT set: %w", err)
+		return nftState, fmt.Errorf("failed to update set %q: %w", nftState.interfaceNatSet.Name, err)
 	}
 
 	if _, err := nftState.updateRule(&nftables.Rule{
@@ -490,7 +490,7 @@ func (n *nftState) updateSet(set *nftables.Set, elements []nftables.SetElement) 
 
 	klog.V(8).Infof("adding set %q, table %q", set.Name, set.Table.Name)
 	if err := n.nft.AddSet(set, elements); err != nil {
-		return fmt.Errorf("failed to add interface set: %w", err)
+		return fmt.Errorf("failed to add set %q to table %q: %w", set.Name, set.Table.Name, err)
 	}
 
 	n.sets[fmt.Sprintf("%s-%s", set.Table.Name, set.Name)] = set
