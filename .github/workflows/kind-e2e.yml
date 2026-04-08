@@ -30,13 +30,9 @@ jobs:
         run: ./setup_cluster.sh
 
       - name: "Test: simple"
-        working-directory: ./e2e
         run: |
           export TERM=dumb
-          # enable ip6_tables
-          sudo modprobe ip6_tables
-
-          ./run_all_tests.sh
+          make e2e
 
       - name: Upload logs
         uses: actions/upload-artifact@v4

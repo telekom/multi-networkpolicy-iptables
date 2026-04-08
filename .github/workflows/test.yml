@@ -31,22 +31,19 @@ jobs:
         exclude: "./vendor/..."
 
     - name: Run go fmt
-      run: diff -u <(echo -n) <(gofmt -d -s ./cmd/ ./pkg/)
+      run: make fmt
 
     - name: Run go vet
-      run: go vet ./...
+      run: make vet
 
     - name: Run go env toolchain
       run: go env -w GOTOOLCHAIN=go${{ matrix.go-version }}+auto
-
 
     - name: Load kernel modules
       run: sudo modprobe nft_ct
 
     - name: Test
-      run: |
-        sudo go test -v -coverprofile=profile.cov ./...
-        sudo chown $(id -u):$(id -g) profile.cov
+      run: make test
 
     - name: Send coverage
       uses: shogo82148/actions-goveralls@v1

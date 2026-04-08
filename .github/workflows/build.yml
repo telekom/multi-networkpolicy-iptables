@@ -28,6 +28,4 @@ jobs:
         cache: true
 
     - name: Build
-      env:
-        GOARCH: ${{ matrix.goarch }}
-      run: go build -o multi-networkpolicy-nftables_${{ matrix.goarch }} ./cmd/multi-networkpolicy-nftables/
+      run: make build GOARCH=${{ matrix.goarch }}
