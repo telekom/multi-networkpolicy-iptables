@@ -1184,7 +1184,14 @@ func NewFakeServer(hostname string) *Server {
 	}
 	podConfig.RegisterEventHandler(server)
 	informerFactory.Start(wait.NeverStop)
-	informerFactory.WaitForCacheSync(wait.NeverStop)
+
+	syncTimeout := make(chan struct{})
+	go func() {
+		time.Sleep(30 * time.Second)
+		close(syncTimeout)
+	}()
+	informerFactory.WaitForCacheSync(syncTimeout)
+
 	go podConfig.Run(wait.NeverStop)
 	return server
 }

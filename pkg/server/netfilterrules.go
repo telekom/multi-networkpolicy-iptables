@@ -194,7 +194,7 @@ func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (
 
 	bootstrapNetfilterChains(nftState)
 
-	slices.SortFunc(podInfo.Interfaces, func(a, b controllers.InterfaceInfo) int {
+	slices.SortStableFunc(podInfo.Interfaces, func(a, b controllers.InterfaceInfo) int {
 		return strings.Compare(a.InterfaceName, b.InterfaceName)
 	})
 
