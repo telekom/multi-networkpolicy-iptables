@@ -523,7 +523,7 @@ func (s *Server) applyPolicyRulesForPod(pod *v1.Pod, podInfo *controllers.PodInf
 	}
 	nft, err := nftables.New(nftables.WithNetNSFd(int(fd)), nftables.AsLasting())
 	if err != nil {
-		return fmt.Errorf("failed to open nftables: %v", err)
+		return fmt.Errorf("failed to open nftables: %w", err)
 	}
 	var closeErr error
 	defer func() {
