@@ -18,9 +18,9 @@ setup_file() {
 setup() {
 	cd $BATS_TEST_DIRNAME
 	load "common"
-	server_net1=$(get_net1_ip6 "test-simple-v6-ingress" "pod-server")
-	client_a_net1=$(get_net1_ip6 "test-simple-v6-ingress" "pod-client-a")
-	client_b_net1=$(get_net1_ip6 "test-simple-v6-ingress" "pod-client-b")
+	server_net1=$(wait_for_net1_ip6 "test-simple-v6-ingress" "pod-server")
+	client_a_net1=$(wait_for_net1_ip6 "test-simple-v6-ingress" "pod-client-a")
+	client_b_net1=$(wait_for_net1_ip6 "test-simple-v6-ingress" "pod-client-b")
 }
 
 teardown_file() {
@@ -42,7 +42,7 @@ teardown_file() {
 
 @test "test-simple-v6-ingress check client-a -> server" {
 	# nc should succeed from client-a to server by policy
-	run kubectl -n test-simple-v6-ingress exec pod-client-a -- sh -c "echo x | nc -w 1 ${server_net1} 5555"
+	run retry_until_success 15 kubectl -n test-simple-v6-ingress exec pod-client-a -- sh -c "echo x | nc -w 1 ${server_net1} 5555"
 	[ "$status" -eq  "0" ]
 }
 

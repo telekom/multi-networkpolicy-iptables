@@ -18,12 +18,12 @@ setup_file() {
 setup() {
 	cd $BATS_TEST_DIRNAME
 	load "common"
-	server_net1=$(get_net1_ip6 "test-simple-v6-ingress-multi" "pod-server")
-	client_a_net1=$(get_net1_ip6 "test-simple-v6-ingress-multi" "pod-client-a")
-	client_b_net1=$(get_net1_ip6 "test-simple-v6-ingress-multi" "pod-client-b")
-	server_net2=$(get_net2_ip6 "test-simple-v6-ingress-multi" "pod-server")
-	client_a_net2=$(get_net2_ip6 "test-simple-v6-ingress-multi" "pod-client-a")
-	client_b_net2=$(get_net2_ip6 "test-simple-v6-ingress-multi" "pod-client-b")
+	server_net1=$(wait_for_net1_ip6 "test-simple-v6-ingress-multi" "pod-server")
+	client_a_net1=$(wait_for_net1_ip6 "test-simple-v6-ingress-multi" "pod-client-a")
+	client_b_net1=$(wait_for_net1_ip6 "test-simple-v6-ingress-multi" "pod-client-b")
+	server_net2=$(wait_for_net2_ip6 "test-simple-v6-ingress-multi" "pod-server")
+	client_a_net2=$(wait_for_net2_ip6 "test-simple-v6-ingress-multi" "pod-client-a")
+	client_b_net2=$(wait_for_net2_ip6 "test-simple-v6-ingress-multi" "pod-client-b")
 }
 
 teardown_file() {
