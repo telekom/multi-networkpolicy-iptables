@@ -488,13 +488,12 @@ func (s *Server) syncMultiPolicy() error {
 }
 
 func (s *Server) applyPolicyForPod(p *v1.Pod) error {
-	s.podMap.Update(s.podChanges)
 	podInfo, err := s.podMap.GetPodInfo(p)
 	if err != nil {
 		return fmt.Errorf("cannot get %s/%s podInfo: %w", p.Namespace, p.Name, err)
 	}
 	if len(podInfo.Interfaces) == 0 {
-		klog.V(8).Infof("skipped due to no interfaces")
+		klog.V(8).Infof("skipped pod %s/%s due to no interfaces", p.Namespace, p.Name)
 		return nil
 	}
 	netnsPath := podInfo.NetNSPath
