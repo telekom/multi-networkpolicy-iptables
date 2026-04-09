@@ -477,36 +477,7 @@ func (s *Server) syncMultiPolicy() error {
 		}
 		klog.V(8).Infof("SYNC %s/%s", p.Namespace, p.Name)
 		if multiutils.CheckNodeNameIdentical(s.Hostname, p.Spec.NodeName) {
-			s.podMap.Update(s.podChanges)
-			podInfo, err := s.podMap.GetPodInfo(p)
-			if err != nil {
-				klog.Errorf("cannot get %s/%s podInfo: %v", p.Namespace, p.Name, err)
-				continue
-			}
-			if len(podInfo.Interfaces) == 0 {
-				klog.V(8).Infof("skipped due to no interfaces")
-				continue
-			}
-			netnsPath := podInfo.NetNSPath
-			if s.hostPrefix != "" {
-				netnsPath = fmt.Sprintf("%s/%s", s.hostPrefix, netnsPath)
-			}
-			// implement netfilter logic here
-			netns, err := ns.GetNS(netnsPath)
-			if err != nil {
-				klog.Errorf("cannot get pod (%s/%s:%s) netns (%s): %v", p.Namespace, p.Name, p.Status.Phase, netnsPath, err)
-				continue
-			}
-			defer func() {
-				err := netns.Close()
-				if err != nil {
-					klog.Errorf("cannot close pod (%s/%s:%s) netns (%s): %v", p.Namespace, p.Name, p.Status.Phase, netnsPath, err)
-				}
-			}()
-
-			klog.V(8).Infof("pod: %s/%s %s", p.Namespace, p.Name, netnsPath)
-			err = s.applyPolicyRulesForPod(p, podInfo, netns)
-			if err != nil {
+			if err := s.applyPolicyForPod(p); err != nil {
 				klog.Errorf("can't apply netfilter rules for pod [%s]: %v", podNamespacedName(p), err)
 			}
 		} else {
@@ -514,6 +485,35 @@ func (s *Server) syncMultiPolicy() error {
 		}
 	}
 	return nil
+}
+
+func (s *Server) applyPolicyForPod(p *v1.Pod) error {
+	s.podMap.Update(s.podChanges)
+	podInfo, err := s.podMap.GetPodInfo(p)
+	if err != nil {
+		return fmt.Errorf("cannot get %s/%s podInfo: %w", p.Namespace, p.Name, err)
+	}
+	if len(podInfo.Interfaces) == 0 {
+		klog.V(8).Infof("skipped due to no interfaces")
+		return nil
+	}
+	netnsPath := podInfo.NetNSPath
+	if s.hostPrefix != "" {
+		netnsPath = fmt.Sprintf("%s/%s", s.hostPrefix, netnsPath)
+	}
+	// implement netfilter logic here
+	netNs, err := ns.GetNS(netnsPath)
+	if err != nil {
+		return fmt.Errorf("cannot get pod (%s/%s:%s) netns (%s): %w", p.Namespace, p.Name, p.Status.Phase, netnsPath, err)
+	}
+	defer func() {
+		if closeErr := netNs.Close(); closeErr != nil {
+			klog.Errorf("cannot close pod (%s/%s:%s) netns (%s): %v", p.Namespace, p.Name, p.Status.Phase, netnsPath, closeErr)
+		}
+	}()
+
+	klog.V(8).Infof("pod: %s/%s %s", p.Namespace, p.Name, netnsPath)
+	return s.applyPolicyRulesForPod(p, podInfo, netNs)
 }
 
 func (s *Server) applyPolicyRulesForPod(pod *v1.Pod, podInfo *controllers.PodInfo, netNs ns.NetNS) error {
