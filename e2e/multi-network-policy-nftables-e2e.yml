@@ -6,9 +6,12 @@ metadata:
 rules:
   - apiGroups: ["k8s.cni.cncf.io"]
     resources:
-      - '*'
+      - multi-networkpolicies
+      - network-attachment-definitions
     verbs:
-      - '*'
+      - get
+      - list
+      - watch
   - apiGroups:
       - ""
     resources:
@@ -53,42 +56,6 @@ kind: ServiceAccount
 metadata:
   name: multi-networkpolicy
   namespace: kube-system
-# ---
-# kind: ConfigMap
-# apiVersion: v1
-# metadata:
-#   name: multi-networkpolicy-custom-v4-rules
-#   namespace: kube-system
-#   labels:
-#     tier: node
-#     app: multi-networkpolicy
-# data:
-#   custom-v4-rules.txt: |
-#     # accept redirect
-#     -p icmp --icmp-type redirect -j ACCEPT
-#     # accept fragmentation-needed (for MTU discovery)
-#     -p icmp --icmp-type fragmentation-needed -j ACCEPT
-# ---
-# kind: ConfigMap
-# apiVersion: v1
-# metadata:
-#   name: multi-networkpolicy-custom-v6-rules
-#   namespace: kube-system
-#   labels:
-#     tier: node
-#     app: multi-networkpolicy
-# data:
-#   custom-v6-rules.txt: |
-#     # accept NDP
-#     -p icmpv6 --icmpv6-type neighbor-solicitation -j ACCEPT
-#     -p icmpv6 --icmpv6-type neighbor-advertisement -j ACCEPT
-#     # accept RA/RS
-#     -p icmpv6 --icmpv6-type router-solicitation -j ACCEPT
-#     -p icmpv6 --icmpv6-type router-advertisement -j ACCEPT
-#     # accept redirect
-#     -p icmpv6 --icmpv6-type redirect -j ACCEPT
-#     # accept packet-too-big (for MTU discovery)
-#     -p icmpv6 --icmpv6-type packet-too-big -j ACCEPT
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -151,22 +118,7 @@ spec:
         volumeMounts:
         - name: host
           mountPath: /host
-        - name: var-lib-multinetworkpolicy
-          mountPath: /var/lib/multi-networkpolicy
-        # - name: multi-networkpolicy-custom-rules
-        #   mountPath: /etc/multi-networkpolicy/rules
-        #   readOnly: true
       volumes:
         - name: host
           hostPath:
             path: /
-        - name: var-lib-multinetworkpolicy
-          hostPath:
-            path: /var/lib/multi-networkpolicy
-        # - name: multi-networkpolicy-custom-rules
-        #   projected:
-        #     sources:
-        #       - configMap:
-        #           name: multi-networkpolicy-custom-v4-rules
-        #       - configMap:
-        #           name: multi-networkpolicy-custom-v6-rules
