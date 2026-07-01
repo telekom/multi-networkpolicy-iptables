@@ -42,7 +42,7 @@ kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=3
 kubectl apply --wait --timeout=10s -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml
 kubectl -n kube-system wait --for=condition=ready -l name=multus pod --timeout=660s
 kubectl apply --wait --timeout=10s -f cni-install.yml
-kubectl -n kube-system wait --for=condition=ready -l name=cni-plugins pod --timeout=300s
+kubectl -n kube-system rollout status daemonset/install-cni-plugins --timeout=300s
 
 #install bond-cni
 kubectl apply --wait --timeout=10s -f  https://raw.githubusercontent.com/k8snetworkplumbingwg/bond-cni/refs/heads/master/manifests/bond-cni.yaml
