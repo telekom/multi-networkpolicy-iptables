@@ -641,6 +641,21 @@ func TestApplyPodRules(t *testing.T) {
 			if err != nil {
 				t.Fatalf("c.GetRules(%q, %q) failed: %s", filterTable.Name, peerChainActualName, err.Error())
 			}
+
+			// Collect rules from the peer chain and any sub-chains it jumps to,
+			// since ipBlock peers are now placed in a dedicated ipblock sub-chain.
+			allRules := peerChainRules
+			for _, r := range peerChainRules {
+				for _, e := range r.Exprs {
+					if v, ok := e.(*expr.Verdict); ok && v.Kind == expr.VerdictJump {
+						subRules, subErr := c.GetRules(filterTable, &nftables.Chain{Name: v.Chain})
+						if subErr == nil {
+							allRules = append(allRules, subRules...)
+						}
+					}
+				}
+			}
+
 			prefix, err := netip.ParsePrefix(cidrStr)
 			if err != nil {
 				t.Fatalf("failed to parse expected CIDR %q: %v", cidrStr, err)
@@ -662,7 +677,7 @@ func TestApplyPodRules(t *testing.T) {
 
 			foundStart := false
 			foundEnd := false
-			for _, r := range peerChainRules {
+			for _, r := range allRules {
 				for _, e := range r.Exprs {
 					if el, ok := e.(*expr.Lookup); ok {
 						peerSet, err := c.GetSetByName(filterTable, el.SetName)
@@ -1137,6 +1152,153 @@ func TestApplyPodRulesNamespaceSelectorOnlyPeer(t *testing.T) {
 	}
 	if ipInPeerSets["10.99.99.99"] {
 		t.Errorf("blocked pod IP 10.99.99.99 (namespace %q, NOT matched by NamespaceSelector, but on the same policy network) must not be present in peer saddrs sets, got %v", blockedNs, ipInPeerSets)
+	}
+}
+
+// TestApplyPolicyPeersRulesIPBlockExceptPreservesORSemantics verifies that an
+// ipBlock peer with an "except" CIDR is wrapped in its own per-entry subchain,
+// so that the except rule's VerdictReturn only exits that subchain back to the
+// peers chain rather than skipping the rest of the from/to peer list. This
+// exercises the real production entry point applyPolicyPeersRules (not
+// applyPolicyPeersRulesIPBlock directly), so it catches chain-topology
+// regressions.
+//
+// The except rule is identified structurally: it performs an expr.Lookup and
+// terminates in a verdict without ever setting the peer-match mark (no
+// expr.Bitwise mark-set), unlike the CIDR-accept rule which always sets the
+// peer mark before returning. This is more robust than either matching on the
+// rule comment text or on the except set's expr.Lookup.SetName: nftables set
+// names longer than 31 bytes are silently replaced with a content hash (see
+// updateSet), and the except set name (built from the ipBlock subchain name
+// plus protocol/suffix/index) exceeds that limit in realistic topologies, so
+// asserting on a "peer_ipblock_except" substring in the registered set name
+// does not actually hold once the real chain-naming scheme is exercised.
+
+func TestApplyPolicyPeersRulesIPBlockExceptPreservesORSemantics(t *testing.T) {
+	c, newNS := nftest.OpenSystemConn(t, true, DEBUG)
+	defer nftest.CleanupSystemConn(t, newNS, DEBUG)
+	defer c.CloseLasting()
+	c.FlushRuleset()
+	defer c.FlushRuleset()
+
+	nftState, _, mockServer, podMockInfo, err := prepareEnv(c, false)
+	if err != nil {
+		t.Fatalf("failed to prepare test env: %s", err.Error())
+	}
+
+	// Two ipBlock peers in the same from/to list: the first has an except CIDR,
+	// the second does not. If OR semantics are broken, an IP inside the first
+	// peer's except range would incorrectly stop evaluation before the second
+	// peer is ever considered.
+	peers := []multiv1beta1.MultiNetworkPolicyPeer{
+		{
+			IPBlock: &multiv1beta1.IPBlock{
+				CIDR:   "10.0.0.0/8",
+				Except: []string{"10.1.0.0/16"},
+			},
+		},
+		{
+			IPBlock: &multiv1beta1.IPBlock{
+				CIDR: "192.168.0.0/16",
+			},
+		},
+	}
+
+	chainName := nftState.ingressChain.Name
+	chain := nftState.ingressChain
+
+	if err := nftState.applyPolicyPeersRules(context.Background(), mockServer, chainName, chain, "test-policy", peers, podMockInfo, []string{"net1", "net2"}, 0); err != nil {
+		t.Fatalf("applyPolicyPeersRules() failed: %v", err)
+	}
+
+	if err := nftState.nft.Flush(); err != nil {
+		t.Fatalf("nft.Flush() failed: %v", err)
+	}
+
+	filterTable, err := c.ListTableOfFamily(nftState.filter.Name, nftables.TableFamilyINet)
+	if err != nil {
+		t.Fatalf("ListTableOfFamily() failed: %v", err)
+	}
+	if filterTable == nil {
+		t.Fatal("filterTable is nil")
+	}
+
+	peersChainName := nftNameWithSuffix(chainName, "-", fmt.Sprintf("%s-%d", peersChainSuffix, 0))
+	peersChainRules, err := c.GetRules(filterTable, &nftables.Chain{Name: peersChainName})
+	if err != nil {
+		t.Fatalf("GetRules(%q) failed: %v", peersChainName, err)
+	}
+
+	// (a) both ipBlock peers must be reachable from the peers chain via JUMP,
+	// proving the second peer is installed and not short-circuited by the first.
+	var jumpTargets []string
+	for _, r := range peersChainRules {
+		for _, e := range r.Exprs {
+			if v, ok := e.(*expr.Verdict); ok && v.Kind == expr.VerdictJump {
+				jumpTargets = append(jumpTargets, v.Chain)
+			}
+		}
+	}
+	if len(jumpTargets) < 2 {
+		t.Fatalf("peers chain %q has %d JUMP verdicts, want >= 2 (one per ipBlock peer): %v", peersChainName, len(jumpTargets), jumpTargets)
+	}
+
+	// isExceptRule identifies the except-CIDR rule structurally: it performs a
+	// set lookup but, unlike the CIDR-accept rule, never sets the peer-match
+	// mark (no expr.Bitwise) before its verdict.
+	isExceptRule := func(r *nftables.Rule) bool {
+		hasLookup := false
+		hasMarkBitwise := false
+		for _, e := range r.Exprs {
+			switch e.(type) {
+			case *expr.Lookup:
+				hasLookup = true
+			case *expr.Bitwise:
+				hasMarkBitwise = true
+			}
+		}
+		return hasLookup && !hasMarkBitwise
+	}
+
+	// (b) the except rule must not live directly in the peers chain: it must
+	// be scoped inside a per-entry ipBlock subchain so its VerdictReturn
+	// cannot unwind past the peers chain and skip the second peer.
+	for _, r := range peersChainRules {
+		if isExceptRule(r) {
+			t.Errorf("except rule found directly in peers chain %q; it must be scoped to a per-entry ipBlock subchain", peersChainName)
+		}
+	}
+
+	// (c) locate the except rule inside the ipBlock subchains reached via
+	// JUMP, and confirm it is paired with VerdictReturn (not VerdictDrop).
+	foundExceptLookupWithReturn := false
+	for _, subChainName := range jumpTargets {
+		subRules, err := c.GetRules(filterTable, &nftables.Chain{Name: subChainName})
+		if err != nil {
+			continue
+		}
+		for _, r := range subRules {
+			if !isExceptRule(r) {
+				continue
+			}
+			for _, e := range r.Exprs {
+				v, ok := e.(*expr.Verdict)
+				if !ok {
+					continue
+				}
+				if v.Kind == expr.VerdictDrop {
+					t.Errorf("except CIDR rule in subchain %q uses VerdictDrop; want VerdictReturn to allow other peers to still be evaluated", subChainName)
+				}
+				if v.Kind != expr.VerdictReturn {
+					t.Errorf("except CIDR rule in subchain %q has verdict kind = %v; want VerdictReturn", subChainName, v.Kind)
+				} else {
+					foundExceptLookupWithReturn = true
+				}
+			}
+		}
+	}
+	if !foundExceptLookupWithReturn {
+		t.Fatal("no except-set lookup rule with VerdictReturn found in any ipBlock subchain")
 	}
 }
 

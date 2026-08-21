@@ -38,6 +38,7 @@ const (
 	//
 	peerIPBlockExceptPrefix = "peer_ipblock_except"
 	peerIPBlockPrefix       = "peer_ipblock"
+	ipBlockChainSuffix      = "ipblock"
 
 	// protoIPv4 is the user-readable name for IPv4 sets and chains in nftables
 	protoIPv4 = "ipv4"
