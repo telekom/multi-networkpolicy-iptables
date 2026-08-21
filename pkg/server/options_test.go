@@ -148,6 +148,35 @@ func TestBuildReconcilerConfigCarriesOptions(t *testing.T) {
 	if want := []string{"ff00::/8"}; !reflect.DeepEqual(cfg.CommonRuleConfig.AllowDstPrefix, want) {
 		t.Fatalf("AllowDstPrefix = %#v, want %#v", cfg.CommonRuleConfig.AllowDstPrefix, want)
 	}
+	// The SR-IOV tc backend defaults ON (NewOptions sets it), and BuildReconcilerConfig carries it.
+	if !cfg.EnableTCBackend {
+		t.Fatal("EnableTCBackend = false, want true (default on)")
+	}
+}
+
+func TestTCBackendDefaultsOnAndConfigCarriesDisable(t *testing.T) {
+	t.Parallel()
+
+	// NewOptions defaults the SR-IOV tc backend ON.
+	if !NewOptions().enableTCBackend {
+		t.Fatal("NewOptions default enableTCBackend = false, want true")
+	}
+
+	// Setting it false is carried through BuildReconcilerConfig. (The flag
+	// wiring + true default is verified in
+	// TestAddFlagsAcceptsDeprecatedIptablesStateFlagNoop, which owns the single
+	// AddFlags call — klog.InitFlags panics if AddFlags runs twice per binary.)
+	off := NewOptions()
+	off.enableTCBackend = false
+	off.containerRuntimeEndpoint = "/run/crio/crio.sock"
+	off.hostnameOverride = "n"
+	cfg, err := off.BuildReconcilerConfig()
+	if err != nil {
+		t.Fatalf("BuildReconcilerConfig: %v", err)
+	}
+	if cfg.EnableTCBackend {
+		t.Fatal("cfg.EnableTCBackend = true, want false after disabling")
+	}
 }
 
 func TestAddFlagsAcceptsDeprecatedIptablesStateFlagNoop(t *testing.T) {
@@ -156,11 +185,22 @@ func TestAddFlagsAcceptsDeprecatedIptablesStateFlagNoop(t *testing.T) {
 	fs.SetOutput(io.Discard)
 	opts.AddFlags(fs)
 
+	// The SR-IOV tc backend flag registers with a true default (on by default).
+	if tcFlag := fs.Lookup("enable-tc-backend"); tcFlag == nil {
+		t.Fatal("enable-tc-backend flag was not registered")
+	} else if tcFlag.DefValue != "true" {
+		t.Fatalf("--enable-tc-backend default = %q, want \"true\"", tcFlag.DefValue)
+	}
+
 	if err := fs.Parse([]string{
 		"--pod-iptables=/tmp/old-state",
 		"--container-runtime-endpoint=/run/crio/crio.sock",
+		"--enable-tc-backend=false",
 	}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
+	}
+	if opts.enableTCBackend {
+		t.Fatal("--enable-tc-backend=false did not disable the backend")
 	}
 
 	flag := fs.Lookup("pod-iptables")

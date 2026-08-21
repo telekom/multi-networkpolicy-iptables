@@ -12,3 +12,35 @@ variables:
 image-push:
   tags:
   - aws_run_k8s_intel_m
+
+# VM-based SR-IOV tc-flower e2e. The runner has nested virtualization (KVM), so
+# we boot a real VM kernel — which, unlike a shared-kernel container, has the
+# netdevsim module (switchdev eswitch + VF representors) and can boot a patched
+# kernel for offloaded-enforcement ("Layer D"). This exercises representor
+# discovery, the real go-tc netlink driver, and software-datapath flower
+# enforcement against a full kernel.
+#
+# Runs on the KVM-capable runner (same tag as image-push). Override
+# VM_E2E_RUNNER_TAG if a dedicated KVM runner tag is introduced.
+tc-flower-vm-e2e:
+  stage: test
+  image: golang:1.25
+  tags:
+  - ${VM_E2E_RUNNER_TAG}
+  variables:
+    VM_E2E_RUNNER_TAG: "aws_run_k8s_intel_m"
+    # Point at a built, netdevsim-patched kernel (bzImage / tree) to exercise
+    # Layer D (offloaded skip_sw drop actually blocks); unset = boot host kernel.
+    VNG_KERNEL: ""
+  before_script:
+  - |
+    if [ ! -e /dev/kvm ]; then
+      echo "ERROR: /dev/kvm not present on this runner — the VM e2e requires KVM."
+      echo "If this runner should have KVM, check the executor's device passthrough."
+      exit 1
+    fi
+  - apt-get update -qq
+  - apt-get install -y -qq qemu-system-x86 python3-pip iproute2 iputils-ping netcat-openbsd
+  - pip3 install --break-system-packages virtme-ng || pip3 install virtme-ng
+  script:
+  - bash test/emulation/vm-run.sh

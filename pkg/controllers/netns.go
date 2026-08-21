@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -85,6 +86,22 @@ func selectContainerID(statuses []corev1.ContainerStatus) string {
 	return ""
 }
 
+// parseInterfaceIPs converts the string IPs reported by the Multus
+// network-status annotation into typed netip.Addr values. Unparseable entries
+// are logged and skipped rather than failing the whole pod.
+func parseInterfaceIPs(ips []string) []netip.Addr {
+	var out []netip.Addr
+	for _, s := range ips {
+		addr, err := netip.ParseAddr(s)
+		if err != nil {
+			klog.V(4).Infof("skipping unparseable interface IP %q: %v", s, err)
+			continue
+		}
+		out = append(out, addr)
+	}
+	return out
+}
+
 // NewPodInfoFromPod builds PodInfo for a pod using CRI and network definitions.
 func NewPodInfoFromPod(ctx context.Context, pod *corev1.Pod, criClient pb.RuntimeServiceClient, hostname string, networkPlugins []string, netdefResolver NetDefResolver) (*PodInfo, error) {
 	var statuses []netdefv1.NetworkStatus
@@ -146,12 +163,21 @@ func NewPodInfoFromPod(ctx context.Context, pod *corev1.Pod, criClient pb.Runtim
 
 			for _, pluginName := range networkPlugins {
 				if networkPluginsMap[namespacedName] == pluginName {
-					netifs = append(netifs, InterfaceInfo{
+					iface := InterfaceInfo{
 						NetattachName: s.Name,
 						InterfaceName: s.Interface,
 						InterfaceType: networkPluginsMap[namespacedName],
-						IPs:           s.IPs,
-					})
+						IPs:           parseInterfaceIPs(s.IPs),
+					}
+					// Carry SR-IOV device info (VF PCI address, PF PCI address,
+					// host representor netdev) when the CNI reported it, so the
+					// interface can be enforced on its VF representor via tc flower.
+					if s.DeviceInfo != nil && s.DeviceInfo.Pci != nil {
+						iface.PCIAddress = s.DeviceInfo.Pci.PciAddress
+						iface.PFPCIAddress = s.DeviceInfo.Pci.PfPciAddress
+						iface.RepresentorDevice = s.DeviceInfo.Pci.RepresentorDevice
+					}
+					netifs = append(netifs, iface)
 				}
 			}
 		}

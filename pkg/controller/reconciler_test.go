@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -423,6 +424,173 @@ func TestReconcile_NamespaceSelector(t *testing.T) {
 	}
 }
 
+func TestReconcile_MixedInterfacesDispatchToBothBackends(t *testing.T) {
+	namespace, nodeName := testScope(t)
+	pod := newPod(namespace, "pod-mixed", nodeName, map[string]string{"app": "demo"})
+	seedObjects(t,
+		newNamespace(namespace, nil),
+		newNode(nodeName),
+		pod,
+	)
+	setPodRunning(t, pod)
+
+	nftIfaces := 0
+	tcIfaces := 0
+	r := &NodeReconciler{
+		NodeName: nodeName,
+		Client:   testClient,
+		PolicyDeps: &mockPolicyDeps{
+			listPodsFunc: func(labels.Selector) ([]*corev1.Pod, error) {
+				return []*corev1.Pod{pod}, nil
+			},
+			getPodInfoFunc: func(*corev1.Pod) (*controllers.PodInfo, error) {
+				return &controllers.PodInfo{
+					Name:      pod.Name,
+					Namespace: pod.Namespace,
+					NodeName:  nodeName,
+					Interfaces: []controllers.InterfaceInfo{
+						{NetattachName: "macvlan-net", InterfaceName: "net1", InterfaceType: "macvlan", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.1")}},
+						{NetattachName: "sriov-net", InterfaceName: "net2", PCIAddress: "0000:04:00.2", RepresentorDevice: "enp4s0f0_3"},
+					},
+				}, nil
+			},
+		},
+		ApplyRulesForPodFunc: func(_ context.Context, _ controllers.PolicyDeps, _ controllers.CommonRuleConfig, _ controllers.PolicyMap, _ *corev1.Pod, podInfo *controllers.PodInfo, _ string) error {
+			nftIfaces = len(podInfo.Interfaces)
+			for _, iface := range podInfo.Interfaces {
+				if iface.IsSRIOV() {
+					t.Fatalf("nft backend received an SR-IOV interface: %+v", iface)
+				}
+			}
+			return nil
+		},
+		ApplyTCRulesForPodFunc: func(_ context.Context, _ controllers.PolicyDeps, _ controllers.CommonRuleConfig, _ controllers.PolicyMap, _ *corev1.Pod, podInfo *controllers.PodInfo, _ string) error {
+			tcIfaces = len(podInfo.Interfaces)
+			for _, iface := range podInfo.Interfaces {
+				if !iface.IsSRIOV() {
+					t.Fatalf("tc backend received a non-SR-IOV interface: %+v", iface)
+				}
+			}
+			return nil
+		},
+	}
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: nodeName}})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if nftIfaces != 1 {
+		t.Fatalf("nft backend saw %d interfaces, want 1", nftIfaces)
+	}
+	if tcIfaces != 1 {
+		t.Fatalf("tc backend saw %d interfaces, want 1", tcIfaces)
+	}
+}
+
+func TestReconcile_TCBackendDisabledSkipsSRIOV(t *testing.T) {
+	namespace, nodeName := testScope(t)
+	pod := newPod(namespace, "pod-mixed-tcoff", nodeName, map[string]string{"app": "demo"})
+	seedObjects(t,
+		newNamespace(namespace, nil),
+		newNode(nodeName),
+		pod,
+	)
+	setPodRunning(t, pod)
+
+	nftCalled := false
+	tcCalled := false
+	r := &NodeReconciler{
+		NodeName:          nodeName,
+		Client:            testClient,
+		TCBackendDisabled: true, // <-- --enable-tc-backend=false
+		PolicyDeps: &mockPolicyDeps{
+			listPodsFunc: func(labels.Selector) ([]*corev1.Pod, error) {
+				return []*corev1.Pod{pod}, nil
+			},
+			getPodInfoFunc: func(*corev1.Pod) (*controllers.PodInfo, error) {
+				return &controllers.PodInfo{
+					Name:      pod.Name,
+					Namespace: pod.Namespace,
+					NodeName:  nodeName,
+					Interfaces: []controllers.InterfaceInfo{
+						{NetattachName: "macvlan-net", InterfaceName: "net1", InterfaceType: "macvlan", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.1")}},
+						{NetattachName: "sriov-net", InterfaceName: "net2", PCIAddress: "0000:04:00.2", RepresentorDevice: "enp4s0f0_3"},
+					},
+				}, nil
+			},
+		},
+		ApplyRulesForPodFunc: func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error {
+			nftCalled = true
+			return nil
+		},
+		ApplyTCRulesForPodFunc: func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error {
+			tcCalled = true
+			return nil
+		},
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: nodeName}}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if tcCalled {
+		t.Fatal("tc backend must NOT be invoked when TCBackendDisabled is set")
+	}
+	if !nftCalled {
+		t.Fatal("nft backend must still run for the pod's veth-style interface")
+	}
+}
+
+func TestReconcile_TCBackendErrorDoesNotAbortNFT(t *testing.T) {
+	namespace, nodeName := testScope(t)
+	pod := newPod(namespace, "pod-mixed-err", nodeName, map[string]string{"app": "demo"})
+	seedObjects(t,
+		newNamespace(namespace, nil),
+		newNode(nodeName),
+		pod,
+	)
+	setPodRunning(t, pod)
+
+	nftCalled := false
+	r := &NodeReconciler{
+		NodeName: nodeName,
+		Client:   testClient,
+		PolicyDeps: &mockPolicyDeps{
+			listPodsFunc: func(labels.Selector) ([]*corev1.Pod, error) {
+				return []*corev1.Pod{pod}, nil
+			},
+			getPodInfoFunc: func(*corev1.Pod) (*controllers.PodInfo, error) {
+				return &controllers.PodInfo{
+					Name:      pod.Name,
+					Namespace: pod.Namespace,
+					NodeName:  nodeName,
+					Interfaces: []controllers.InterfaceInfo{
+						{NetattachName: "macvlan-net", InterfaceName: "net1", InterfaceType: "macvlan"},
+						{NetattachName: "sriov-net", InterfaceName: "net2", PCIAddress: "0000:04:00.2"},
+					},
+				}, nil
+			},
+		},
+		ApplyRulesForPodFunc: func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error {
+			nftCalled = true
+			return nil
+		},
+		ApplyTCRulesForPodFunc: func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error {
+			return fmt.Errorf("tc apply failed")
+		},
+	}
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: nodeName}})
+	if err == nil {
+		t.Fatal("Reconcile() error = nil, want tc failure surfaced")
+	}
+	if !strings.Contains(err.Error(), "tc apply failed") {
+		t.Fatalf("Reconcile() error = %v, want tc failure context", err)
+	}
+	if !nftCalled {
+		t.Fatal("nft backend was not called; a tc failure must not abort the nft interface")
+	}
+}
+
 func testScope(t *testing.T) (string, string) {
 	t.Helper()
 	base := strings.ToLower(t.Name())
@@ -455,7 +623,7 @@ func testInterface() controllers.InterfaceInfo {
 	return controllers.InterfaceInfo{
 		NetattachName: "net1",
 		InterfaceName: "net1",
-		IPs:           []string{"10.0.0.1"},
+		IPs:           []netip.Addr{netip.MustParseAddr("10.0.0.1")},
 	}
 }
 

@@ -26,3 +26,4 @@ testbin/
 
 # Agent artifacts
 .sisyphus/
+/tcflower.test

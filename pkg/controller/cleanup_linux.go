@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/telekom/multi-networkpolicy-nftables/pkg/controllers"
+	"github.com/telekom/multi-networkpolicy-nftables/pkg/tcflower"
 	corev1 "k8s.io/api/core/v1"
 	pb "k8s.io/cri-api/pkg/apis/runtime/v1"
 	klog "k8s.io/klog/v2"
@@ -43,8 +44,33 @@ func cleanupAllPods(ctx context.Context, r *NodeReconciler, directClient client.
 			continue
 		}
 		targeted++
+
+		// Determine which interfaces this pod has and which backend owns each,
+		// so both dataplanes are cleaned up (a pod may mix veth-style and
+		// SR-IOV interfaces). Interface discovery does not require CRI.
+		podInfo, err := controllers.NewPodInfoFromPod(ctx, pod, nil, r.NodeName, r.NetworkPlugins, r)
+		if err != nil || podInfo == nil || len(podInfo.Interfaces) == 0 {
+			debugLog(r.HostPrefix, "cleanup: pod %s/%s: no relevant interfaces (err=%v), skipping", pod.Namespace, pod.Name, err)
+			continue
+		}
+		byBackend := partitionByBackend(podInfo)
+
+		// tc backend: delete flower filters on the host VF representors. This
+		// needs no pod netns, so it runs even if the pod's netns is already gone.
+		if tcInfo, ok := byBackend[backendTC]; ok {
+			debugLog(r.HostPrefix, "cleanup: removing tc filters for %s/%s", pod.Namespace, pod.Name)
+			if err := tcflower.Flush(ctx, tcInfo, r.HostPrefix); err != nil {
+				debugLog(r.HostPrefix, "cleanup: FAILED to remove tc filters for %s/%s: %v", pod.Namespace, pod.Name, err)
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("pod %s/%s: flush tc filters: %w", pod.Namespace, pod.Name, err))
+			}
+		}
+
+		// nft backend: delete rules inside the pod netns, which must be resolved
+		// via CRI first.
+		if _, ok := byBackend[backendNFT]; !ok {
+			continue
+		}
 		if criClient == nil {
-			var err error
 			criClient, err = r.criRuntimeClient(ctx)
 			if err != nil {
 				debugLog(r.HostPrefix, "cleanup: failed to connect to CRI: %v", err)

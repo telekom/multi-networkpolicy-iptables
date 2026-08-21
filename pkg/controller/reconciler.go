@@ -40,9 +40,17 @@ type NodeReconciler struct {
 	CriConn        *grpc.ClientConn
 
 	ContainerRuntimeEndpoint string
-	criMu                    sync.Mutex
 
-	ApplyRulesForPodFunc func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error
+	// TCBackendDisabled turns off the SR-IOV tc-flower backend. The zero value
+	// (false) keeps it ENABLED, matching the --enable-tc-backend=true default;
+	// main.go sets this from that flag. When true, SR-IOV VF interfaces are not
+	// enforced by this daemon (only the nftables backend runs).
+	TCBackendDisabled bool
+
+	criMu sync.Mutex
+
+	ApplyRulesForPodFunc   func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error
+	ApplyTCRulesForPodFunc func(context.Context, controllers.PolicyDeps, controllers.CommonRuleConfig, controllers.PolicyMap, *corev1.Pod, *controllers.PodInfo, string) error
 }
 
 // CleanupOnShutdown removes policy rules for pods on the local node.
@@ -104,10 +112,24 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			continue
 		}
 
-		if err := r.applyRulesForPod(ctx, deps, r.CommonCfg, policyMap, pod, podInfo, r.HostPrefix); err != nil {
-			klog.Errorf("failed to apply rules for %s/%s: %v", pod.Namespace, pod.Name, err)
-			retryNeeded = true
-			retryErrs = append(retryErrs, fmt.Errorf("apply rules for %s/%s: %w", pod.Namespace, pod.Name, err))
+		// A pod's interfaces may be served by different dataplanes (nftables in
+		// the pod netns for veth-style CNIs, tc flower on the host representor
+		// for SR-IOV VFs). Group by backend and apply each independently so a
+		// failure in one does not abort the others.
+		for kind, backendPodInfo := range partitionByBackend(podInfo) {
+			// The SR-IOV tc-flower backend can be disabled (--enable-tc-backend=false).
+			// When off, skip its interfaces entirely: they are simply not enforced
+			// by this daemon.
+			if kind == backendTC && r.TCBackendDisabled {
+				klog.V(2).Infof("tc backend disabled; not enforcing %d SR-IOV interface(s) on pod %s/%s",
+					len(backendPodInfo.Interfaces), pod.Namespace, pod.Name)
+				continue
+			}
+			if err := r.applyBackend(ctx, kind, deps, r.CommonCfg, policyMap, pod, backendPodInfo, r.HostPrefix); err != nil {
+				klog.Errorf("failed to apply %s rules for %s/%s: %v", kind, pod.Namespace, pod.Name, err)
+				retryNeeded = true
+				retryErrs = append(retryErrs, fmt.Errorf("apply rules for %s/%s: %w", pod.Namespace, pod.Name, err))
+			}
 		}
 	}
 
@@ -127,11 +149,32 @@ func (r *NodeReconciler) policyDeps() controllers.PolicyDeps {
 	return r
 }
 
+// applyBackend dispatches to the dataplane that enforces the given interface
+// group. podInfo has already been narrowed to the interfaces owned by kind.
+func (r *NodeReconciler) applyBackend(ctx context.Context, kind backendKind, deps controllers.PolicyDeps, cfg controllers.CommonRuleConfig, policyMap controllers.PolicyMap, pod *corev1.Pod, podInfo *controllers.PodInfo, hostPrefix string) error {
+	switch kind {
+	case backendTC:
+		return r.applyTCRulesForPod(ctx, deps, cfg, policyMap, pod, podInfo, hostPrefix)
+	default:
+		return r.applyRulesForPod(ctx, deps, cfg, policyMap, pod, podInfo, hostPrefix)
+	}
+}
+
 func (r *NodeReconciler) applyRulesForPod(ctx context.Context, deps controllers.PolicyDeps, cfg controllers.CommonRuleConfig, policyMap controllers.PolicyMap, pod *corev1.Pod, podInfo *controllers.PodInfo, hostPrefix string) error {
 	if r.ApplyRulesForPodFunc != nil {
 		return r.ApplyRulesForPodFunc(ctx, deps, cfg, policyMap, pod, podInfo, hostPrefix)
 	}
 	return applyRulesForPod(ctx, deps, cfg, policyMap, pod, podInfo, hostPrefix)
+}
+
+// applyTCRulesForPod enforces SR-IOV VF interfaces via tc flower on the host
+// representor. The ApplyTCRulesForPodFunc seam mirrors ApplyRulesForPodFunc for
+// tests; the real implementation lands in a later phase.
+func (r *NodeReconciler) applyTCRulesForPod(ctx context.Context, deps controllers.PolicyDeps, cfg controllers.CommonRuleConfig, policyMap controllers.PolicyMap, pod *corev1.Pod, podInfo *controllers.PodInfo, hostPrefix string) error {
+	if r.ApplyTCRulesForPodFunc != nil {
+		return r.ApplyTCRulesForPodFunc(ctx, deps, cfg, policyMap, pod, podInfo, hostPrefix)
+	}
+	return applyTCRulesForPod(ctx, deps, cfg, policyMap, pod, podInfo, hostPrefix)
 }
 
 // ListPods returns pods matching the provided label selector.

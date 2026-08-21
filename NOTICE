@@ -1,1 +1,14 @@
 Copyright 2020 Kubernetes Network Plumbing Working Group
+
+The SR-IOV tc-flower backend (pkg/tcflower) draws on the design and
+approach of the following Apache-2.0 projects. No source was copied
+verbatim; where an algorithm is reproduced it is reimplemented and cited
+in the relevant source file:
+
+  - k8snetworkplumbingwg/multi-networkpolicy-tc
+    (tc-flower-on-VF-representor enforcement of MultiNetworkPolicy)
+    https://github.com/k8snetworkplumbingwg/multi-networkpolicy-tc
+
+  - Mellanox/sriovnet (VF-to-representor sysfs resolution algorithm;
+    reimplemented host-prefix-aware in pkg/tcflower/discover.go)
+    https://github.com/Mellanox/sriovnet

@@ -46,3 +46,11 @@ Some networks may require accepting traffic from/to specific address prefixes fo
 --allow-src-prefix=fe80::/10
 --allow-dst-prefix=fe80::/10,ff00::/8
 ```
+
+#### SR-IOV tc-flower backend
+
+For enforcing `MultiNetworkPolicy` on SR-IOV VFs in switchdev mode (via tc
+flower on the host VF representor, offloaded to the NIC eSwitch), see
+[SR-IOV tc-flower dataplane backend](sriov-tc-backend.md). It covers backend
+selection, prerequisites, the `--enable-tc-backend` / `--tc-offload-mode`
+flags, and the T-CaaS bm4x deployment caveat.

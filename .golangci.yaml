@@ -28,6 +28,7 @@ linters:
           - gocyclo
           - errcheck
           - gosec
+          - unparam
     paths:
       - vendor
       - third_party

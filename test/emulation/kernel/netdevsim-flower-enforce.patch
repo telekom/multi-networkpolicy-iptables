@@ -1,0 +1,326 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# netdevsim: enforce offloaded tc-flower drop rules in the simulated datapath
+#
+# This is GPL-2.0 Linux KERNEL code (a derivative of drivers/net/netdevsim/*),
+# NOT part of the Apache-2.0 Go module. It is kept here as a .patch file only,
+# applied to a CI kernel build; it is never compiled into or linked with the
+# daemon (which talks to the kernel over netlink, across the syscall boundary).
+# Do not move this into the Go source tree.
+#
+# PURPOSE (Layer D, see ../README.md):
+#   Stock upstream netdevsim accepts a TC_SETUP_CLSFLOWER offload (marks the
+#   filter in_hw) but never builds a dataplane rule, so a skip_sw (hardware-only)
+#   drop does NOT block packets. That leaves one gap uncoverable without a
+#   Mellanox card: "an offloaded skip_sw drop truly blocks in the eSwitch."
+#   This patch stores a minimal flower key/mask + verdict per netdevsim port and
+#   evaluates it in nsim_start_xmit, so CI on a patched kernel can prove an
+#   offloaded drop actually blocks a packet. It is deliberately minimal: IPv4
+#   5-tuple + eth_type + drop/pass only — enough to prove enforcement, NOT full
+#   flower semantics.
+#
+# STATUS: DRAFT / best-effort against mainline (~torvalds/linux 58717b2a1365).
+#   Line numbers WILL drift; the flow_rule dissector API and nsim_start_xmit
+#   change across releases. REBASE to the exact CI kernel before applying. The
+#   nsim_create/nsim_destroy hunks are marked @@ -XXXX and must be located at
+#   rebase time. Fill in the Signed-off-by before submitting anywhere.
+#
+# VERDICT (from the design review): this is OPTIONAL / nice-to-have. The real
+#   Layer-D guarantee (actual mlx5 offload, DMFS/SMFS behaviour, switchdev
+#   rejection) is only meaningful on the CX5/CX6 hardware tier — this simulated
+#   matcher tests code we wrote, not mlx5. Land the patched-kernel job as a
+#   capability-probed, non-blocking SKIP-elsewhere job, or skip it entirely and
+#   rely on Layer C (software translation proof) + the CX5 hardware tier.
+#
+# HOW TO USE:
+#   1. git clone --depth 1 <kernel>; git apply (after rebase) this patch.
+#   2. make defconfig + CONFIG_NETDEVSIM=y (or =m) + CONFIG_NET_CLS_FLOWER=y; make -j.
+#   3. VNG_KERNEL=<tree>/arch/x86/boot/bzImage bash test/emulation/vm-run.sh
+#   4. The Layer-D test installs `flower skip_sw ... action drop`, confirms in_hw,
+#      then asserts a matching packet is dropped and a non-matching one passes.
+#      On an UNPATCHED kernel the test must self-SKIP (matching packet not
+#      dropped => "stock netdevsim no-op flower; needs patched kernel").
+#
+Subject: [PATCH] netdevsim: enforce offloaded tc-flower drop rules in the sim datapath
+
+Stock netdevsim accepts a TC_SETUP_CLSFLOWER offload (marks it in_hw) but
+never builds a dataplane rule, so a skip_sw drop does not block traffic.
+Store a minimal flower key/mask+verdict per port and evaluate it in
+nsim_start_xmit so CI can prove an offloaded drop actually blocks a packet.
+Not full flower semantics: IPv4 5-tuple + eth_type + drop/pass only.
+
+Signed-off-by: FILL-IN-BEFORE-SUBMIT <email@example.invalid>
+---
+ drivers/net/netdevsim/netdevsim.h |  20 +++++
+ drivers/net/netdevsim/netdev.c    |   8 ++
+ drivers/net/netdevsim/tc.c        | 150 +++++++++++++++++++++++++++++-
+ 3 files changed, 176 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/netdevsim/netdevsim.h
++++ b/drivers/net/netdevsim/netdevsim.h
+@@ -105,6 +105,23 @@ struct nsim_rq {
+ 	struct hrtimer napi_timer;
+ };
+
++struct nsim_flower_key {
++	__be16 n_proto;
++	u8     ip_proto;
++	__be32 src_ip;
++	__be32 dst_ip;
++	__be16 src_port;
++	__be16 dst_port;
++};
++
++struct nsim_flower_rule {
++	struct list_head list;
++	unsigned long cookie;
++	struct nsim_flower_key key;
++	struct nsim_flower_key mask;
++	bool drop;
++};
++
+ struct netdevsim {
+ 	struct net_device *netdev;
+ 	struct nsim_dev *nsim_dev;
+@@ -160,6 +177,9 @@ struct netdevsim {
+ 	struct netdevsim __rcu *peer;
+
+ 	struct notifier_block nb;
+ 	struct netdev_net_notifier nn;
++
++	struct list_head flower_rules;   /* struct nsim_flower_rule */
++	spinlock_t flower_lock;          /* protects flower_rules */
+ };
+
+@@ -472,6 +492,8 @@ int nsim_setup_tc(struct net_device *dev, enum tc_setup_type type,
+ 		  void *type_data);
++bool nsim_flower_should_drop(struct netdevsim *ns, struct sk_buff *skb);
++void nsim_flower_flush(struct netdevsim *ns);
+
+ struct nsim_bus_dev {
+
+--- a/drivers/net/netdevsim/netdev.c
++++ b/drivers/net/netdevsim/netdev.c
+@@ -134,6 +134,11 @@ static netdev_tx_t nsim_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 		peer_dev = peer_ns->netdev;
+ 	}
+
++	/* Simulated eSwitch: enforce offloaded (skip_sw) flower drop rules. */
++	if (nsim_flower_should_drop(ns, skb)) {
++		dr = SKB_DROP_REASON_TC_EGRESS;
++		goto out_drop_free;
++	}
++
+ 	dr = nsim_do_psp(skb, ns, peer_ns, &psp_ext);
+ 	if (dr)
+ 		goto out_drop_free;
+@@ -XXXX,6 +XXXX,7 @@ struct netdevsim *nsim_create(...)
+ 	ns->nsim_dev_port = nsim_dev_port;
++	INIT_LIST_HEAD(&ns->flower_rules);
++	spin_lock_init(&ns->flower_lock);
+ 	...
+@@ -XXXX,6 +XXXX,7 @@ void nsim_destroy(struct netdevsim *ns)
+ 	...
++	nsim_flower_flush(ns);
+ 	free_netdev(dev);
+
+--- a/drivers/net/netdevsim/tc.c
++++ b/drivers/net/netdevsim/tc.c
+@@ -1,10 +1,12 @@
+ // SPDX-License-Identifier: GPL-2.0
+
+ #include <linux/netdevice.h>
++#include <linux/ip.h>
++#include <linux/tcp.h>
++#include <linux/udp.h>
++#include <linux/if_ether.h>
+ #include <net/pkt_sched.h>
+ #include <net/pkt_cls.h>
++#include <net/flow_offload.h>
+
+ #include "netdevsim.h"
+
++static int nsim_flower_parse(struct flow_cls_offload *f,
++			     struct nsim_flower_rule *r)
++{
++	struct flow_rule *rule = flow_cls_offload_flow_rule(f);
++	struct flow_action_entry *act;
++	int i;
++
++	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_BASIC)) {
++		struct flow_match_basic m;
++
++		flow_rule_match_basic(rule, &m);
++		r->key.n_proto = m.key->n_proto;
++		r->mask.n_proto = m.mask->n_proto;
++		r->key.ip_proto = m.key->ip_proto;
++		r->mask.ip_proto = m.mask->ip_proto;
++	}
++	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_IPV4_ADDRS)) {
++		struct flow_match_ipv4_addrs m;
++
++		flow_rule_match_ipv4_addrs(rule, &m);
++		r->key.src_ip = m.key->src;  r->mask.src_ip = m.mask->src;
++		r->key.dst_ip = m.key->dst;  r->mask.dst_ip = m.mask->dst;
++	}
++	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PORTS)) {
++		struct flow_match_ports m;
++
++		flow_rule_match_ports(rule, &m);
++		r->key.src_port = m.key->src;  r->mask.src_port = m.mask->src;
++		r->key.dst_port = m.key->dst;  r->mask.dst_port = m.mask->dst;
++	}
++
++	if (!flow_action_has_entries(&rule->action))
++		return -EOPNOTSUPP;
++	flow_action_for_each(i, act, &rule->action) {
++		switch (act->id) {
++		case FLOW_ACTION_DROP:
++			r->drop = true;
++			return 0;
++		case FLOW_ACTION_ACCEPT:
++			r->drop = false;
++			return 0;
++		default:
++			return -EOPNOTSUPP;   /* keep unsupported actions honest */
++		}
++	}
++	return 0;
++}
++
++static int nsim_flower_replace(struct netdevsim *ns, struct flow_cls_offload *f)
++{
++	struct nsim_flower_rule *r;
++	int err;
++
++	r = kzalloc(sizeof(*r), GFP_KERNEL);
++	if (!r)
++		return -ENOMEM;
++	r->cookie = f->cookie;
++	err = nsim_flower_parse(f, r);
++	if (err) {
++		NSIM_EA(f->common.extack, "unsupported flower match/action");
++		kfree(r);
++		return err;
++	}
++	spin_lock_bh(&ns->flower_lock);
++	list_add_tail(&r->list, &ns->flower_rules);
++	spin_unlock_bh(&ns->flower_lock);
++	return 0;
++}
++
++static int nsim_flower_destroy(struct netdevsim *ns, struct flow_cls_offload *f)
++{
++	struct nsim_flower_rule *r, *tmp;
++
++	spin_lock_bh(&ns->flower_lock);
++	list_for_each_entry_safe(r, tmp, &ns->flower_rules, list) {
++		if (r->cookie == f->cookie) {
++			list_del(&r->list);
++			kfree(r);
++			break;
++		}
++	}
++	spin_unlock_bh(&ns->flower_lock);
++	return 0;
++}
++
++static bool nsim_key_field_matches(__be32 kv, __be32 mv, __be32 pv)
++{
++	return !mv || (kv & mv) == (pv & mv);
++}
++
++bool nsim_flower_should_drop(struct netdevsim *ns, struct sk_buff *skb)
++{
++	struct nsim_flower_rule *r;
++	__be16 n_proto = 0, sport = 0, dport = 0;
++	__be32 saddr = 0, daddr = 0;
++	u8 ip_proto = 0;
++	bool drop = false;
++
++	if (list_empty(&ns->flower_rules))
++		return false;
++
++	if (skb->protocol == htons(ETH_P_IP) &&
++	    pskb_may_pull(skb, sizeof(struct iphdr))) {
++		struct iphdr *iph = ip_hdr(skb);
++
++		n_proto = htons(ETH_P_IP);
++		ip_proto = iph->protocol;
++		saddr = iph->saddr;
++		daddr = iph->daddr;
++		if (ip_proto == IPPROTO_TCP &&
++		    pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
++			struct tcphdr *th = tcp_hdr(skb);
++			sport = th->source; dport = th->dest;
++		} else if (ip_proto == IPPROTO_UDP &&
++			   pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
++			struct udphdr *uh = udp_hdr(skb);
++			sport = uh->source; dport = uh->dest;
++		}
++	}
++
++	spin_lock_bh(&ns->flower_lock);
++	list_for_each_entry(r, &ns->flower_rules, list) {
++		if (r->mask.n_proto  && r->key.n_proto  != n_proto)  continue;
++		if (r->mask.ip_proto && r->key.ip_proto != ip_proto) continue;
++		if (!nsim_key_field_matches(r->key.src_ip, r->mask.src_ip, saddr)) continue;
++		if (!nsim_key_field_matches(r->key.dst_ip, r->mask.dst_ip, daddr)) continue;
++		if (r->mask.src_port && r->key.src_port != sport) continue;
++		if (r->mask.dst_port && r->key.dst_port != dport) continue;
++		drop = r->drop;
++		if (drop)
++			break;
++	}
++	spin_unlock_bh(&ns->flower_lock);
++	return drop;
++}
++
++void nsim_flower_flush(struct netdevsim *ns)
++{
++	struct nsim_flower_rule *r, *tmp;
++
++	spin_lock_bh(&ns->flower_lock);
++	list_for_each_entry_safe(r, tmp, &ns->flower_rules, list) {
++		list_del(&r->list);
++		kfree(r);
++	}
++	spin_unlock_bh(&ns->flower_lock);
++}
++
+ static int
+ nsim_setup_tc_block_cb(enum tc_setup_type type, void *type_data, void *cb_priv)
+ {
+ 	struct flow_cls_common_offload *common = type_data;
++	struct netdevsim *ns = cb_priv;
+ 	int err = 0;
+
+ 	switch (type) {
+ 	case TC_SETUP_CLSBPF:
+ 		err = nsim_bpf_setup_tc_block_cb(type, type_data, cb_priv);
+ 		break;
+ 	case TC_SETUP_CLSFLOWER:
+-		break;
++	{
++		struct flow_cls_offload *f = type_data;
++
++		switch (f->command) {
++		case FLOW_CLS_REPLACE:
++			err = nsim_flower_replace(ns, f);
++			break;
++		case FLOW_CLS_DESTROY:
++			err = nsim_flower_destroy(ns, f);
++			break;
++		default:
++			err = 0;   /* STATS etc.: accept, no-op */
++			break;
++		}
++		break;
++	}
+ 	default:
+ 		NSIM_EA(common->extack, "offload type not supported");
+ 		err = -EOPNOTSUPP;
+ 		break;
+ 	}
+ 	return err;
+ }

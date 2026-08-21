@@ -117,9 +117,9 @@ func TestBootstrap(t *testing.T) {
 
 	podMockInfo := &controllers.PodInfo{
 		Interfaces: []controllers.InterfaceInfo{
-			{NetattachName: "one", InterfaceName: "eth0", IPs: []string{"10.0.0.0", "fd00::"}},
-			{NetattachName: "two", InterfaceName: "eth1", IPs: []string{"fd01::"}},
-			{NetattachName: "three", InterfaceName: "eth2", IPs: []string{"10.0.0.0"}},
+			{NetattachName: "one", InterfaceName: "eth0", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.0"), netip.MustParseAddr("fd00::")}},
+			{NetattachName: "two", InterfaceName: "eth1", IPs: []netip.Addr{netip.MustParseAddr("fd01::")}},
+			{NetattachName: "three", InterfaceName: "eth2", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.0")}},
 		},
 	}
 
@@ -229,7 +229,7 @@ func TestApplyPolicyRulesForPodAndFamilyReturnsPolicyRuleError(t *testing.T) {
 		Interfaces: []controllers.InterfaceInfo{{
 			NetattachName: fmt.Sprintf("%s/%s", namespace, "policy-net-1"),
 			InterfaceName: "net1",
-			IPs:           []string{"10.1.1.1"},
+			IPs:           []netip.Addr{netip.MustParseAddr("10.1.1.1")},
 		}},
 	}
 	badPort := intstr.IntOrString{Type: intstr.Int, IntVal: 70000}
@@ -279,9 +279,9 @@ func TestApplyCommonChainRules(t *testing.T) {
 	defer c.FlushRuleset()
 	podMockInfo := &controllers.PodInfo{
 		Interfaces: []controllers.InterfaceInfo{
-			{InterfaceName: "eth0", IPs: []string{"10.0.0.0", "fd00::"}},
-			{InterfaceName: "eth1", IPs: []string{"fd01::"}},
-			{InterfaceName: "eth2", IPs: []string{"10.0.0.0"}},
+			{InterfaceName: "eth0", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.0"), netip.MustParseAddr("fd00::")}},
+			{InterfaceName: "eth1", IPs: []netip.Addr{netip.MustParseAddr("fd01::")}},
+			{InterfaceName: "eth2", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.0")}},
 		},
 	}
 	nftState, err := bootstrapNetfilterRules(c, podMockInfo)
@@ -395,7 +395,7 @@ func TestApplyPodRules(t *testing.T) {
 		NetattachName: policyNetAttach,
 		InterfaceType: "macvlan",
 		InterfaceName: "net1",
-		IPs:           []string{"10.1.1.1"},
+		IPs:           []netip.Addr{netip.MustParseAddr("10.1.1.1")},
 	})
 	policyNetworks := []string{"net1", "net2", policyNetAttach}
 
@@ -1006,7 +1006,7 @@ func TestApplyPodRulesNamespaceSelectorOnlyPeer(t *testing.T) {
 		NetattachName: policyNet,
 		InterfaceType: "macvlan",
 		InterfaceName: "net1",
-		IPs:           []string{"10.1.1.1"},
+		IPs:           []netip.Addr{netip.MustParseAddr("10.1.1.1")},
 	})
 	policyNetworks := []string{"net1", "net2", policyNet}
 
@@ -1546,9 +1546,9 @@ func prepareEnv(c *nftables.Conn, createServer bool) (*nftState, string, *testPo
 		Name:      "mock-pod",
 		Namespace: "default",
 		Interfaces: []controllers.InterfaceInfo{
-			{NetattachName: "net0", InterfaceType: "macvlan", InterfaceName: "eth0", IPs: []string{"10.0.0.0", "fd00::"}},
-			{NetattachName: "net1", InterfaceType: "macvlan", InterfaceName: "eth1", IPs: []string{"fd01::"}},
-			{NetattachName: "net2", InterfaceType: "ipvlan", InterfaceName: "eth2", IPs: []string{"10.0.0.0"}},
+			{NetattachName: "net0", InterfaceType: "macvlan", InterfaceName: "eth0", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.0"), netip.MustParseAddr("fd00::")}},
+			{NetattachName: "net1", InterfaceType: "macvlan", InterfaceName: "eth1", IPs: []netip.Addr{netip.MustParseAddr("fd01::")}},
+			{NetattachName: "net2", InterfaceType: "ipvlan", InterfaceName: "eth2", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.0")}},
 		},
 	}
 
@@ -1954,7 +1954,7 @@ func TestFindRuleReturnsFirstMatch(t *testing.T) {
 
 	podMockInfo := &controllers.PodInfo{
 		Interfaces: []controllers.InterfaceInfo{
-			{InterfaceName: "eth0", IPs: []string{"10.0.0.1"}},
+			{InterfaceName: "eth0", IPs: []netip.Addr{netip.MustParseAddr("10.0.0.1")}},
 		},
 	}
 	state, err := bootstrapNetfilterRules(c, podMockInfo)

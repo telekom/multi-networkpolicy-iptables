@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -62,7 +63,22 @@ type InterfaceInfo struct {
 	NetattachName string
 	InterfaceName string
 	InterfaceType string
-	IPs           []string
+	IPs           []netip.Addr
+
+	// SR-IOV device information, populated from the Multus network-status
+	// annotation's device-info.pci field when the interface is backed by an
+	// SR-IOV virtual function. When set, the interface is enforced on the host
+	// via tc flower on its VF representor instead of nftables inside the pod
+	// network namespace. Empty for veth-style CNIs (macvlan, ipvlan, bond).
+	PCIAddress        string
+	PFPCIAddress      string
+	RepresentorDevice string
+}
+
+// IsSRIOV reports whether the interface is backed by an SR-IOV virtual function
+// and must therefore be enforced on its host VF representor via tc flower.
+func (info *InterfaceInfo) IsSRIOV() bool {
+	return info.PCIAddress != "" || info.RepresentorDevice != ""
 }
 
 // CheckPolicyNetwork checks whether given interface is target or not,

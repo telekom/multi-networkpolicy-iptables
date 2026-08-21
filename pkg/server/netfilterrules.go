@@ -1526,11 +1526,11 @@ func (n *nftState) applyPolicyPeersRulesSelector(ctx context.Context, deps contr
 				}
 
 				for _, ip := range podIntf.IPs {
-					podIntfsIPsMap[ip] = nil
+					podIntfsIPsMap[ip.String()] = nil
 				}
 
 				for _, ip := range sPodIntf.IPs {
-					podIntfsIPsMap[ip] = nil
+					podIntfsIPsMap[ip.String()] = nil
 				}
 
 				for ip := range podIntfsIPsMap {

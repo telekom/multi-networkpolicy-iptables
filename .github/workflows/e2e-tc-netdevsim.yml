@@ -1,0 +1,88 @@
+on:
+  push:
+    branches:
+      - main
+      - master
+      - nftables
+  pull_request:
+name: e2e-tc-netdevsim
+permissions:
+  contents: read
+jobs:
+  netdevsim:
+    strategy:
+      matrix:
+        go-version: ["1.25.11"]
+        os: [ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+
+    - name: Install iproute2 and netcat
+      run: sudo apt-get update && sudo apt-get install -y iproute2 netcat-openbsd
+
+    - name: Load netdevsim kernel module
+      # Best-effort: the Go test and shell scripts self-skip if netdevsim or the
+      # required switchdev/tc features are unavailable on the runner kernel.
+      run: sudo modprobe netdevsim || echo "netdevsim modprobe failed; tests will self-skip"
+
+    - name: Run tc-flower netdevsim + software-enforcement e2e tests
+      # -E preserves the Go env/cache; the tests self-skip without root/netdevsim
+      # or the required tools. Not run with -short so the integration and
+      # software-datapath e2e (TestSoftwareEnforcementE2E) tests are eligible.
+      run: sudo -E env "PATH=$PATH" go test -run 'Netdevsim|TCFlower|E2E' ./pkg/tcflower/... -v
+
+    - name: Run emulation harness (discovery + software enforcement)
+      run: sudo bash test/emulation/run.sh
+
+  # VM tier: boot a real VM kernel via KVM (GitHub's ubuntu runners expose
+  # /dev/kvm) so netdevsim + switchdev representors and the flower dataplane run
+  # against a full kernel — parity with the GitLab tc-flower-vm-e2e job. The
+  # harness self-skips (exit 0) if /dev/kvm or virtme-ng are unavailable.
+  vm-e2e:
+    strategy:
+      matrix:
+        go-version: ["1.25.11"]
+        os: [ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+
+    - name: Check KVM availability and make host kernel readable
+      run: |
+        if [ -e /dev/kvm ]; then
+          echo "KVM present: $(ls -l /dev/kvm)"
+          sudo chmod 666 /dev/kvm || true
+        else
+          echo "KVM NOT present on this runner; vm-run.sh will self-skip."
+        fi
+        # virtme-ng reuses the host kernel image + modules, which are root-only
+        # on GitHub runners; make them world-readable so vng can boot them.
+        sudo chmod -R +rX "/boot" "/lib/modules/$(uname -r)" 2>/dev/null || true
+
+    - name: Install QEMU, virtme-ng, and net tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-system-x86 qemu-utils python3-pip iproute2 iputils-ping netcat-openbsd
+        pip3 install --break-system-packages virtme-ng || pip3 install virtme-ng
+
+    - name: Run tc-flower suite inside a VM kernel
+      # vm-run.sh boots the host kernel in a throwaway VM (reusing this rootfs),
+      # then runs the emulation scripts + the netdevsim/e2e Go tests inside it.
+      # Exits 0 (skip) if KVM/virtme-ng are unavailable, so the job is green
+      # either way but exercises the real kernel path when KVM is present.
+      run: bash test/emulation/vm-run.sh
