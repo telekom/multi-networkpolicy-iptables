@@ -1,3 +1,4 @@
+//go:build linux
 package xt
 
 // Unknown represents the bytes Info payload for unknown Info types where no
