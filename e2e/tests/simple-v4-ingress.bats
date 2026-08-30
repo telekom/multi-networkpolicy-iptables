@@ -52,6 +52,42 @@ teardown_file() {
 	[ "$status" -eq  "0" ]
 }
 
+@test "secondary interface allow and deny behavior" {
+	# Validate the policy against the Multus secondary interface using the same
+	# allow and deny flow as the persistent validator.
+	run retry_until_success 10 kubectl -n test-simple-v4-ingress exec pod-client-a -- sh -c "echo x | nc -w 1 ${server_net1} 5555"
+	[ "$status" -eq "0" ]
+	run retry_until_deny 30 kubectl -n test-simple-v4-ingress exec pod-client-b -- sh -c "echo x | nc -w 1 ${server_net1} 5555"
+	[ "$status" -eq "0" ]
+}
+
+@test "status-only secondary interface still enforces ingress policy" {
+	# Model validators that observe the Multus network-status annotation without
+	# the original network selection annotation. Restart the daemon first so
+	# pre-existing rules cannot make this lifecycle test pass spuriously.
+	run kubectl -n kube-system patch daemonsets multi-networkpolicy-ds-amd64 -p '{"spec": {"template": {"spec": {"nodeSelector": {"non-existing": "true"}}}}}'
+	[ "$status" -eq "0" ]
+	run kubectl -n kube-system wait --for=delete -l app=multi-networkpolicy pod --timeout=${kubewait_timeout}
+	[ "$status" -eq "0" ]
+
+	run kubectl -n test-simple-v4-ingress annotate pod --all k8s.v1.cni.cncf.io/networks-
+	[ "$status" -eq "0" ]
+
+	run kubectl -n kube-system patch daemonsets multi-networkpolicy-ds-amd64 --type json -p='[{"op": "remove", "path": "/spec/template/spec/nodeSelector/non-existing"}]'
+	[ "$status" -eq "0" ]
+	run kubectl -n kube-system rollout status daemonset/multi-networkpolicy-ds-amd64 --timeout=${kubewait_timeout}
+	[ "$status" -eq "0" ]
+	run kubectl -n kube-system wait --for=condition=ready -l app=multi-networkpolicy pod --timeout=${kubewait_timeout}
+	[ "$status" -eq "0" ]
+	run wait_for_nft_rules test-simple-v4-ingress pod-server test-multinetwork-policy-simple-1
+	[ "$status" -eq "0" ]
+
+	run retry_until_success 10 kubectl -n test-simple-v4-ingress exec pod-client-a -- sh -c "echo x | nc -w 1 ${server_net1} 5555"
+	[ "$status" -eq "0" ]
+	run retry_until_deny 30 kubectl -n test-simple-v4-ingress exec pod-client-b -- sh -c "echo x | nc -w 1 ${server_net1} 5555"
+	[ "$status" -eq "0" ]
+}
+
 @test "test-simple-v4-ingress check server -> client-a" {
 	# nc should succeed from server to client-a by no policy definition for direction (egress for pod-server)
 	run kubectl -n test-simple-v4-ingress exec pod-server -- sh -c "echo x | nc -w 1 ${client_a_net1} 5555"
@@ -80,5 +116,3 @@ teardown_file() {
 	kubectl -n kube-system wait --for=condition=ready -l app=multi-networkpolicy pod --timeout=${kubewait_timeout}
 	wait_for_nft_rules "test-simple-v4-ingress" "pod-server" "test-multinetwork-policy-simple-1"
 }
-
-

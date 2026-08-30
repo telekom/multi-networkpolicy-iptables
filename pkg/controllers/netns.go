@@ -85,6 +85,71 @@ func selectContainerID(statuses []corev1.ContainerStatus) string {
 	return ""
 }
 
+func networkStatusForPod(pod *corev1.Pod, networks []*netdefv1.NetworkSelectionElement) ([]netdefv1.NetworkStatus, error) {
+	if !podNeedsNetworkStatus(pod, networks) {
+		return nil, nil
+	}
+	return netdefutils.GetNetworkStatus(pod)
+}
+
+func podNeedsNetworkStatus(pod *corev1.Pod, networks []*netdefv1.NetworkSelectionElement) bool {
+	if len(networks) > 0 {
+		return true
+	}
+	if pod == nil || pod.Annotations == nil {
+		return false
+	}
+
+	networkAnnotation := strings.TrimSpace(pod.Annotations[netdefv1.NetworkAttachmentAnnot])
+	if networkAnnotation != "" && networkAnnotation != "[]" && networkAnnotation != "null" {
+		return true
+	}
+
+	var statuses []netdefv1.NetworkStatus
+	statusAnnotation := strings.TrimSpace(pod.Annotations[netdefv1.NetworkStatusAnnot])
+	if statusAnnotation == "" || json.Unmarshal([]byte(statusAnnotation), &statuses) != nil {
+		return false
+	}
+	return hasSecondaryNetworkStatus(statuses)
+}
+
+func hasSecondaryNetworkStatus(statuses []netdefv1.NetworkStatus) bool {
+	for _, status := range statuses {
+		if status.Interface != "" && status.Interface != "eth0" && !status.Default {
+			return true
+		}
+	}
+	return false
+}
+
+func networkSelectionsFromStatus(pod *corev1.Pod, statuses []netdefv1.NetworkStatus) []*netdefv1.NetworkSelectionElement {
+	if len(statuses) == 0 {
+		return nil
+	}
+
+	networks := make([]*netdefv1.NetworkSelectionElement, 0, len(statuses))
+	for _, status := range statuses {
+		if !hasSecondaryNetworkStatus([]netdefv1.NetworkStatus{status}) {
+			continue
+		}
+
+		namespace := pod.Namespace
+		name := status.Name
+		if slash := strings.IndexByte(name, '/'); slash >= 0 {
+			namespace, name = name[:slash], name[slash+1:]
+		}
+		if name == "" {
+			continue
+		}
+		networks = append(networks, &netdefv1.NetworkSelectionElement{
+			Name:             name,
+			Namespace:        namespace,
+			InterfaceRequest: status.Interface,
+		})
+	}
+	return networks
+}
+
 // NewPodInfoFromPod builds PodInfo for a pod using CRI and network definitions.
 func NewPodInfoFromPod(ctx context.Context, pod *corev1.Pod, criClient pb.RuntimeServiceClient, hostname string, networkPlugins []string, netdefResolver NetDefResolver) (*PodInfo, error) {
 	var statuses []netdefv1.NetworkStatus
@@ -99,9 +164,12 @@ func NewPodInfoFromPod(ctx context.Context, pod *corev1.Pod, criClient pb.Runtim
 			}
 		}
 		// parse networkStatus
-		statuses, err = netdefutils.GetNetworkStatus(pod)
+		statuses, err = networkStatusForPod(pod, networks)
 		if err != nil {
 			klog.Errorf("failed to get pod(%s/%s) network status: %v", pod.Namespace, pod.Name, err)
+		}
+		if len(networks) == 0 && err == nil {
+			networks = networkSelectionsFromStatus(pod, statuses)
 		}
 
 		klog.V(1).Infof("pod:%s/%s %s/%s", pod.Namespace, pod.Name, hostname, pod.Spec.NodeName)

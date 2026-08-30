@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	multiv1beta1 "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+	netdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/telekom/multi-networkpolicy-nftables/pkg/controllers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -248,6 +250,38 @@ func TestReconcile_RunningPodWithNoInterfacesDoesNotRequeue(t *testing.T) {
 	}
 	if applyCalled {
 		t.Fatalf("ApplyRulesForPodFunc was called for pod with no interfaces")
+	}
+}
+
+func TestReconcile_PendingSecondaryInterfaceRequeues(t *testing.T) {
+	namespace, nodeName := testScope(t)
+	pod := newPod(namespace, "pod-pending-interface", nodeName, map[string]string{"app": "demo"})
+	pod.Annotations = map[string]string{
+		netdefv1.NetworkAttachmentAnnot: "default/secondary",
+	}
+	seedObjects(t,
+		newNamespace(namespace, nil),
+		newNode(nodeName),
+		pod,
+	)
+	setPodRunning(t, pod)
+
+	r := &NodeReconciler{
+		NodeName: nodeName,
+		Client:   testClient,
+		PolicyDeps: &mockPolicyDeps{
+			getPodInfoFunc: func(*corev1.Pod) (*controllers.PodInfo, error) {
+				return &controllers.PodInfo{Name: pod.Name, Namespace: pod.Namespace, NodeName: nodeName}, nil
+			},
+		},
+	}
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: nodeName}})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != 2*time.Second {
+		t.Fatalf("Reconcile() RequeueAfter = %s, want 2s", result.RequeueAfter)
 	}
 }
 

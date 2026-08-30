@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,6 +102,9 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 		if podInfo == nil || len(podInfo.Interfaces) == 0 {
 			klog.V(4).Infof("pod %s/%s has no relevant interfaces, skipping", pod.Namespace, pod.Name)
+			if podNeedsInterfaceRetry(pod, podInfo) {
+				retryNeeded = true
+			}
 			continue
 		}
 
@@ -118,6 +122,18 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+func podNeedsInterfaceRetry(pod *corev1.Pod, podInfo *controllers.PodInfo) bool {
+	if podInfo != nil && len(podInfo.NetworkStatus) > 0 {
+		return true
+	}
+	if pod == nil || pod.Annotations == nil {
+		return false
+	}
+
+	networkAnnotation := strings.TrimSpace(pod.Annotations[netdefv1.NetworkAttachmentAnnot])
+	return networkAnnotation != "" && networkAnnotation != "[]" && networkAnnotation != "null"
 }
 
 func (r *NodeReconciler) policyDeps() controllers.PolicyDeps {
