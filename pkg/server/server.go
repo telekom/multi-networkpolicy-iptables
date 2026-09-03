@@ -95,7 +95,7 @@ func CompareInternalPolicy(a, b internalPolicy) int {
 func ApplyPolicyRulesForPodAndFamily(ctx context.Context, deps controllers.PolicyDeps, cfg controllers.CommonRuleConfig, policyMap controllers.PolicyMap, pod *v1.Pod, podInfo *controllers.PodInfo, nft *nftables.Conn) error {
 	klog.V(4).Infof("Generate rules for Pod: [%s]\n", podNamespacedName(pod))
 
-	nftState, err := bootstrapNetfilterRules(nft, podInfo)
+	nftState, err := bootstrapNetfilterRules(nft, cfg, podInfo)
 	if err != nil {
 		return fmt.Errorf("bootstrap netfilter rules failed for pod [%s]: %w", podNamespacedName(pod), err)
 	}

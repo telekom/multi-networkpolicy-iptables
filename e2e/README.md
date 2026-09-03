@@ -28,3 +28,20 @@ After making changes to the code, it is possible to update the server Daemonset 
 ```
 ./update_image_on_cluster.sh
 ```
+
+### Forward filtering test
+
+`tests/forward-filtering.bats` covers `--enable-forward-filtering`, which is needed
+for sandboxed runtimes that L3-forward pod traffic (e.g. Kata Containers with
+`internetworking_model = "l3forwarding"`). Kata itself is not installed in the kind
+cluster; instead a routing pod attached to two macvlan networks forwards traffic
+between clients and a server, which exercises the same nftables `forward` hook in the
+pod network namespace.
+
+The suite patches `--enable-forward-filtering` into the DaemonSet during
+`setup_file` and removes it again in `teardown_file`, so it can be run together with
+all other suites (`./run_all_tests.sh`) or on its own:
+
+```
+$ ./run_single_test.sh forward-filtering
+```

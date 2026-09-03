@@ -46,3 +46,41 @@ Some networks may require accepting traffic from/to specific address prefixes fo
 --allow-src-prefix=fe80::/10
 --allow-dst-prefix=fe80::/10,ff00::/8
 ```
+
+#### Sandboxed runtimes that L3-forward pod traffic (e.g. Kata Containers)
+
+By default the controller filters traffic in the pod network namespace on the
+`input` and `output` hooks, which is where traffic terminates for regular
+runtimes such as runc.
+
+With sandboxed runtimes the workload runs inside a VM, so traffic is not
+delivered locally in the pod network namespace but passed on to a VM-side
+device. For Kata Containers with `internetworking_model = "l3forwarding"` the
+packets are L3-routed between the CNI interface and the VM-side device inside
+the pod network namespace, i.e. they traverse the `forward` hook and never
+`input`/`output`. Enable the `forward` hook on such nodes:
+
+```
+--enable-forward-filtering
+```
+
+With the flag enabled, an additional `forward` base chain is created in the
+pod's `multi-networkpolicy-filter` table. Direction is classified with the same
+pod interface set used by `input`/`output`: a packet entering the namespace on a
+pod interface is treated as ingress, a packet leaving the namespace on a pod
+interface as egress. Policy, peer, port and conntrack handling are identical to
+the default path, since the `forward` hook is a regular netfilter hook with
+working connection tracking.
+
+Notes:
+
+* The flag is off by default and has no effect on regular runc pods. It is safe
+  to leave it disabled on nodes without sandboxed runtimes. Turning it off again
+  removes the `forward` chain on the next sync.
+* Enable it only on nodes that actually L3-forward pod traffic. On a node with
+  multi-homed pods that route between their own interfaces, enabling it makes
+  that routed traffic subject to network policies as well, which may drop
+  traffic that was previously unfiltered.
+* Kata's `tcfilter` networking model is **not** supported: TC `mirred redirect`
+  takes the packet before netfilter, so no nftables hook in the pod network
+  namespace sees the traffic.

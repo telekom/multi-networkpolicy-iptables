@@ -38,9 +38,64 @@ get_net2_ip6() {
 	fi
 }
 
+# daemon_has_arg reports whether the multi-networkpolicy DaemonSet is configured
+# with the given container argument.
+# Usage: daemon_has_arg <arg>
+daemon_has_arg() {
+	kubectl -n kube-system get daemonset multi-networkpolicy-ds-amd64 \
+		-o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null | grep -q -- "$1"
+}
+
+# daemon_arg_index prints the index of the given container argument in the
+# multi-networkpolicy DaemonSet, or nothing if the argument is not set.
+# Usage: idx=$(daemon_arg_index <arg>)
+daemon_arg_index() {
+	kubectl -n kube-system get daemonset multi-networkpolicy-ds-amd64 \
+		-o json 2>/dev/null | jq -r --arg arg "$1" \
+		'.spec.template.spec.containers[0].args | index($arg) // empty'
+}
+
+# wait_for_daemon_rollout waits until the DaemonSet finished rolling out and its
+# pods are ready again.
+wait_for_daemon_rollout() {
+	kubectl -n kube-system rollout status daemonset/multi-networkpolicy-ds-amd64 \
+		--timeout=${kubewait_timeout}
+	kubectl -n kube-system wait --for=condition=ready -l app=multi-networkpolicy pod \
+		--timeout=${kubewait_timeout}
+}
+
+# enable_forward_filtering adds --enable-forward-filtering to the daemon and
+# waits for the rollout. It is a no-op if the flag is already set.
+# teardown_file_common always removes the flag again, so a failing test cannot
+# leak it into the following test suites.
+enable_forward_filtering() {
+	if daemon_has_arg "--enable-forward-filtering"; then
+		return 0
+	fi
+	echo "# Enabling --enable-forward-filtering on the daemon" >&3
+	kubectl -n kube-system patch daemonsets multi-networkpolicy-ds-amd64 --type json \
+		-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-forward-filtering"}]'
+	wait_for_daemon_rollout
+}
+
+# disable_forward_filtering removes --enable-forward-filtering from the daemon and
+# waits for the rollout. It is a no-op if the flag is not set.
+disable_forward_filtering() {
+	local idx
+	idx=$(daemon_arg_index "--enable-forward-filtering")
+	if [ -z "$idx" ]; then
+		return 0
+	fi
+	echo "# Disabling --enable-forward-filtering on the daemon" >&3
+	kubectl -n kube-system patch daemonsets multi-networkpolicy-ds-amd64 --type json \
+		-p="[{\"op\": \"remove\", \"path\": \"/spec/template/spec/containers/0/args/${idx}\"}]"
+	wait_for_daemon_rollout
+}
+
 # teardown_file_common — base cleanup logic shared by all .bats files.
 # Deletes the manifest (MANIFEST_FILE) and optional extra namespaces (CLEANUP_NAMESPACES).
-# Also restores the DaemonSet nodeSelector if it was patched by a "disable" test.
+# Also restores the DaemonSet nodeSelector if it was patched by a "disable" test
+# and removes --enable-forward-filtering if a forward filtering test set it.
 # Each .bats file's teardown_file() MUST call this function:
 #
 #   teardown_file() {
@@ -49,6 +104,10 @@ get_net2_ip6() {
 #   }
 #
 teardown_file_common() {
+	# Remove --enable-forward-filtering if a forward filtering test left it patched.
+	# The default deployment never sets it, so this is a no-op for every other suite.
+	disable_forward_filtering 2>&3 || true
+
 	# Restore DaemonSet nodeSelector if a "disable" test left it patched.
 	# This prevents cascade failures across test suites.
 	local ds_patched

@@ -21,6 +21,13 @@ type CommonRuleConfig struct {
 	AcceptICMP     bool
 	AllowSrcPrefix []string
 	AllowDstPrefix []string
+	// EnableForwardFiltering additionally hooks the pod's forward chain, so that
+	// traffic routed *through* the pod network namespace is filtered as well.
+	// This is required for sandboxed runtimes such as Kata Containers with the
+	// l3forwarding networking model, where pod traffic is L3-forwarded between
+	// the CNI interface and the VM tap device instead of being delivered
+	// locally (input/output).
+	EnableForwardFiltering bool
 }
 
 // NetDefResolver resolves CNI plugin metadata for network attachments.
