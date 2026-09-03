@@ -184,3 +184,194 @@ func containerStatusWithInfo(info string) *pb.ContainerStatusResponse {
 		Info: map[string]string{"info": info},
 	}
 }
+
+// TestNewPodInfoFromPodDefaultNetwork covers pods whose primary network is a
+// net-attach-def selected with the Multus default-network annotation. Such pods
+// have no "k8s.v1.cni.cncf.io/networks" annotation, but must still be policed.
+func TestNewPodInfoFromPodDefaultNetwork(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		annotations   map[string]string
+		networkPlugin string
+		wantIfaces    []InterfaceInfo
+	}{
+		{
+			name: "default network only",
+			annotations: map[string]string{
+				DefaultNetworkAnnotation: "ns-a/net-a",
+				"k8s.v1.cni.cncf.io/network-status": `[{
+					"name": "ns-a/net-a",
+					"interface": "eth0",
+					"ips": ["10.0.0.2"],
+					"default": true
+				}]`,
+			},
+			networkPlugin: "macvlan",
+			wantIfaces: []InterfaceInfo{
+				{NetattachName: "ns-a/net-a", InterfaceName: "eth0", InterfaceType: "macvlan", IPs: []string{"10.0.0.2"}},
+			},
+		},
+		{
+			name: "default network without namespace defaults to pod namespace",
+			annotations: map[string]string{
+				DefaultNetworkAnnotation: "net-a",
+				"k8s.v1.cni.cncf.io/network-status": `[{
+					"name": "net-a",
+					"interface": "eth0",
+					"ips": ["10.0.0.2"],
+					"default": true
+				}]`,
+			},
+			networkPlugin: "macvlan",
+			wantIfaces: []InterfaceInfo{
+				{NetattachName: "net-a", InterfaceName: "eth0", InterfaceType: "macvlan", IPs: []string{"10.0.0.2"}},
+			},
+		},
+		{
+			name: "default network combined with a secondary network",
+			annotations: map[string]string{
+				DefaultNetworkAnnotation:      "ns-a/net-a",
+				"k8s.v1.cni.cncf.io/networks": "net-b",
+				"k8s.v1.cni.cncf.io/network-status": `[{
+					"name": "ns-a/net-a",
+					"interface": "eth0",
+					"ips": ["10.0.0.2"],
+					"default": true
+				},{
+					"name": "net-b",
+					"interface": "net1",
+					"ips": ["10.1.0.2"]
+				}]`,
+			},
+			networkPlugin: "macvlan",
+			wantIfaces: []InterfaceInfo{
+				{NetattachName: "ns-a/net-a", InterfaceName: "eth0", InterfaceType: "macvlan", IPs: []string{"10.0.0.2"}},
+				{NetattachName: "net-b", InterfaceName: "net1", InterfaceType: "macvlan", IPs: []string{"10.1.0.2"}},
+			},
+		},
+		{
+			name: "default network with a plugin type that is not configured",
+			annotations: map[string]string{
+				DefaultNetworkAnnotation: "ns-a/net-a",
+				"k8s.v1.cni.cncf.io/network-status": `[{
+					"name": "ns-a/net-a",
+					"interface": "eth0",
+					"ips": ["10.0.0.2"],
+					"default": true
+				}]`,
+			},
+			networkPlugin: "bridge",
+			wantIfaces:    nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "ns-a", Annotations: tc.annotations},
+				Spec:       corev1.PodSpec{NodeName: "node-a"},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{Name: "app", ContainerID: "cri-o://container-a", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+					},
+				},
+			}
+			conn := &fakeRuntimeConn{t: t, response: containerStatusWithInfo(`{"pid":1234}`)}
+
+			podInfo, err := NewPodInfoFromPod(context.Background(), pod, pb.NewRuntimeServiceClient(conn), "node-a",
+				[]string{tc.networkPlugin}, &mockNetDefResolver{pluginType: "macvlan"})
+			if err != nil {
+				t.Fatalf("NewPodInfoFromPod() error = %v", err)
+			}
+			if len(podInfo.Interfaces) != len(tc.wantIfaces) {
+				t.Fatalf("interfaces = %+v, want %+v", podInfo.Interfaces, tc.wantIfaces)
+			}
+			for i, want := range tc.wantIfaces {
+				got := podInfo.Interfaces[i]
+				if got.NetattachName != want.NetattachName || got.InterfaceName != want.InterfaceName ||
+					got.InterfaceType != want.InterfaceType || strings.Join(got.IPs, ",") != strings.Join(want.IPs, ",") {
+					t.Errorf("interfaces[%d] = %+v, want %+v", i, got, want)
+				}
+			}
+			if len(tc.wantIfaces) == 0 {
+				if podInfo.NetNSPath != "" {
+					t.Errorf("NetNSPath = %q, want empty", podInfo.NetNSPath)
+				}
+				return
+			}
+			if podInfo.NetNSPath != "/proc/1234/ns/net" {
+				t.Errorf("NetNSPath = %q, want /proc/1234/ns/net", podInfo.NetNSPath)
+			}
+		})
+	}
+}
+
+// TestParseDefaultNetworkAnnotation covers the annotation parsing itself,
+// including the JSON form and the absent/empty cases.
+func TestParseDefaultNetworkAnnotation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		annotation    map[string]string
+		wantLen       int
+		wantName      string
+		wantNamespace string
+		wantErr       bool
+	}{
+		{name: "absent", annotation: nil, wantLen: 0},
+		{name: "empty", annotation: map[string]string{DefaultNetworkAnnotation: "  "}, wantLen: 0},
+		{
+			name:       "plain name",
+			annotation: map[string]string{DefaultNetworkAnnotation: "net-a"},
+			wantLen:    1, wantName: "net-a", wantNamespace: "ns-a",
+		},
+		{
+			name:       "namespaced name",
+			annotation: map[string]string{DefaultNetworkAnnotation: "other-ns/net-a"},
+			wantLen:    1, wantName: "net-a", wantNamespace: "other-ns",
+		},
+		{
+			name:       "json form",
+			annotation: map[string]string{DefaultNetworkAnnotation: `[{"name":"net-a","namespace":"other-ns"}]`},
+			wantLen:    1, wantName: "net-a", wantNamespace: "other-ns",
+		},
+		{
+			name:       "invalid json",
+			annotation: map[string]string{DefaultNetworkAnnotation: `[{"name":`},
+			wantErr:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "ns-a", Annotations: tc.annotation}}
+			networks, err := parseDefaultNetworkAnnotation(pod)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseDefaultNetworkAnnotation() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseDefaultNetworkAnnotation() error = %v", err)
+			}
+			if len(networks) != tc.wantLen {
+				t.Fatalf("networks = %+v, want %d entries", networks, tc.wantLen)
+			}
+			if tc.wantLen == 0 {
+				return
+			}
+			if networks[0].Name != tc.wantName || networks[0].Namespace != tc.wantNamespace {
+				t.Errorf("networks[0] = %s/%s, want %s/%s", networks[0].Namespace, networks[0].Name, tc.wantNamespace, tc.wantName)
+			}
+		})
+	}
+}

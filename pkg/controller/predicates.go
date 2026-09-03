@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"github.com/telekom/multi-networkpolicy-nftables/pkg/controllers"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -102,6 +103,8 @@ func containerStatusesChanged(oldStatuses, newStatuses []corev1.ContainerStatus)
 var networkAnnotationKeys = []string{
 	"k8s.v1.cni.cncf.io/network-status",
 	"k8s.v1.cni.cncf.io/networks",
+	// A pod can also be attached to a net-attach-def as its primary network.
+	controllers.DefaultNetworkAnnotation,
 }
 
 func networkAnnotationsChanged(oldAnnotations, newAnnotations map[string]string) bool {

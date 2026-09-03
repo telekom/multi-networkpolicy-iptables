@@ -47,6 +47,7 @@ type Options struct {
 	syncPeriod               int
 	acceptICMPv6             bool
 	acceptICMP               bool
+	enableForwardFiltering   bool
 	allowSrcPrefixText       string
 	allowDstPrefixText       string
 	// healthPort is the TCP port the health HTTP server listens on (0 = disabled).
@@ -90,6 +91,10 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&o.syncPeriod, "sync-period", defaultSyncPeriod, "sync period in seconds for reconciliation")
 	fs.BoolVar(&o.acceptICMP, "accept-icmp", false, "accept all ICMP traffic")
 	fs.BoolVar(&o.acceptICMPv6, "accept-icmpv6", false, "accept all ICMPv6 traffic")
+	fs.BoolVar(&o.enableForwardFiltering, "enable-forward-filtering", false,
+		"Also filter traffic routed through the pod network namespace (nftables forward hook). "+
+			"Required for sandboxed runtimes that L3-forward pod traffic instead of terminating it locally, "+
+			"e.g. Kata Containers with internetworking_model=l3forwarding. Leave disabled for runc-only nodes.")
 	fs.StringVar(&o.allowSrcPrefixText, "allow-src-prefix", "", "Accept source IP prefix list, comma separated CIDRs (e.g. \"fe80::/10\")")
 	fs.StringVar(&o.allowDstPrefixText, "allow-dst-prefix", "", "Accept destination IP prefix list, comma separated CIDRs (e.g. \"fe80::/10,ff00::/8\")")
 	fs.IntVar(&o.healthPort, "health-port", 0, "TCP port for the health HTTP server (0 to disable, 1-65535 to enable).")
@@ -169,6 +174,8 @@ func (o *Options) BuildReconcilerConfig() (*ReconcilerConfig, error) {
 			AcceptICMPv6:   o.acceptICMPv6,
 			AllowSrcPrefix: o.allowSrcPrefix,
 			AllowDstPrefix: o.allowDstPrefix,
+
+			EnableForwardFiltering: o.enableForwardFiltering,
 		},
 	}, nil
 }

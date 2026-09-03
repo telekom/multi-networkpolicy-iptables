@@ -18,6 +18,27 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// DefaultNetworkAnnotation is the Multus annotation that overrides a pod's
+// default (primary) network with a NetworkAttachmentDefinition. Pods using it
+// have no "k8s.v1.cni.cncf.io/networks" annotation, but their primary interface
+// is still backed by a net-attach-def and can therefore be policed.
+const DefaultNetworkAnnotation = "v1.multus-cni.io/default-network"
+
+// parseDefaultNetworkAnnotation returns the network selection elements declared
+// via the Multus default-network annotation. It returns nil when the annotation
+// is absent.
+func parseDefaultNetworkAnnotation(pod *corev1.Pod) ([]*netdefv1.NetworkSelectionElement, error) {
+	annot, ok := pod.Annotations[DefaultNetworkAnnotation]
+	if !ok || strings.TrimSpace(annot) == "" {
+		return nil, nil
+	}
+	networks, err := netdefutils.ParseNetworkAnnotation(annot, pod.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s annotation %q: %w", DefaultNetworkAnnotation, annot, err)
+	}
+	return networks, nil
+}
+
 // GetPodNetNSPathWithContext resolves the pod network namespace path via CRI.
 func GetPodNetNSPathWithContext(ctx context.Context, criClient pb.RuntimeServiceClient, pod *corev1.Pod) (string, error) {
 	netnsPath := ""
@@ -98,6 +119,15 @@ func NewPodInfoFromPod(ctx context.Context, pod *corev1.Pod, criClient pb.Runtim
 				klog.Errorf("failed to get pod network annotation: %v", err)
 			}
 		}
+		// A pod may replace its primary network with a net-attach-def instead of
+		// (or in addition to) requesting secondary networks, so both annotations
+		// contribute to the set of networks this daemon can enforce policies on.
+		defaultNetworks, defErr := parseDefaultNetworkAnnotation(pod)
+		if defErr != nil {
+			klog.Errorf("failed to get pod(%s/%s) default network annotation: %v", pod.Namespace, pod.Name, defErr)
+		}
+		networks = append(defaultNetworks, networks...)
+
 		// parse networkStatus
 		statuses, err = netdefutils.GetNetworkStatus(pod)
 		if err != nil {
@@ -108,7 +138,7 @@ func NewPodInfoFromPod(ctx context.Context, pod *corev1.Pod, criClient pb.Runtim
 
 		// netdefname -> plugin name map
 		networkPluginsMap := make(map[types.NamespacedName]string)
-		if networks == nil {
+		if len(networks) == 0 {
 			klog.V(8).Infof("%s/%s: NO NET", pod.Namespace, pod.Name)
 		} else {
 			klog.V(8).Infof("%s/%s: net: %v", pod.Namespace, pod.Name, networks)

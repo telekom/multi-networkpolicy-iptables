@@ -46,6 +46,12 @@ const (
 
 	allowConntrackRuleName = "allow-conntracked"
 
+	// forwardIngressInterfaceFilterComment/forwardEgressInterfaceFilterComment
+	// identify the jump rules installed in the forward base chain when
+	// forward filtering is enabled.
+	forwardIngressInterfaceFilterComment = "forward-ingress-interface-filter"
+	forwardEgressInterfaceFilterComment  = "forward-egress-interface-filter"
+
 	common                   = "common"
 	destinationAddressSuffix = "daddrs"
 	sourceAddressSuffix      = "saddrs"

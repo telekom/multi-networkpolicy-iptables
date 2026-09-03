@@ -1,0 +1,107 @@
+---
+# The pods in this suite replace their primary network with a
+# net-attach-def via the Multus "v1.multus-cni.io/default-network" annotation,
+# so they have no "k8s.v1.cni.cncf.io/networks" annotation at all and their
+# policed interface is eth0 instead of net1.
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  namespace: default
+  name: macvlan-defnet
+spec:
+  config: '{
+            "cniVersion": "0.3.1",
+            "name": "macvlan-defnet",
+            "plugins": [
+                {
+                    "type": "macvlan",
+                    "mode": "bridge",
+                    "capabilities": {"ips": true },
+                    "ipam":{
+                      "type":"static"
+                    }
+                }]
+        }'
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: test-default-network
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-server
+  namespace: test-default-network
+  annotations:
+    v1.multus-cni.io/default-network: '[{"name":"macvlan-defnet","namespace":"default","ips":["2.2.42.1/24"]}]'
+  labels:
+    app: test-default-network
+    name: pod-server
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["nc", "-kl", "0.0.0.0", "5555"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-client-a
+  namespace: test-default-network
+  annotations:
+    v1.multus-cni.io/default-network: '[{"name":"macvlan-defnet","namespace":"default","ips":["2.2.42.11/24"]}]'
+  labels:
+    app: test-default-network
+    name: pod-client-a
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["sleep", "infinity"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-client-b
+  namespace: test-default-network
+  annotations:
+    v1.multus-cni.io/default-network: '[{"name":"macvlan-defnet","namespace":"default","ips":["2.2.42.12/24"]}]'
+  labels:
+    app: test-default-network
+    name: pod-client-b
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["sleep", "infinity"]
+    securityContext:
+      privileged: true
+---
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: testnetwork-policy-defnet-1
+  namespace: test-default-network
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: default/macvlan-defnet
+spec:
+  podSelector:
+    matchLabels:
+      name: pod-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 2.2.42.11/32

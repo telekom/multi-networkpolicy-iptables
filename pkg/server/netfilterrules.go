@@ -69,6 +69,7 @@ type nftState struct {
 	// Common Chains
 	input      *nftables.Chain
 	output     *nftables.Chain
+	forward    *nftables.Chain
 	prerouting *nftables.Chain
 
 	// multi-networkpolicy chains
@@ -136,7 +137,7 @@ func nftNameWithSuffix(base, separator, suffix string) string {
 	return truncateNftName(base, nftNameMaxLen-suffixLen) + sanitizedSeparator + sanitizedSuffix
 }
 
-func bootstrapNetfilterChains(nftState *nftState) error {
+func bootstrapNetfilterChains(nftState *nftState, cfg controllers.CommonRuleConfig) error {
 	// the netfilter hook system
 	// ref: https://wiki.nftables.org/wiki-nftables/index.php/Netfilter_hooks
 	// Create our chains if they don't already exist
@@ -160,6 +161,22 @@ func bootstrapNetfilterChains(nftState *nftState) error {
 		Type:     nftables.ChainTypeFilter,
 	}); err != nil {
 		return fmt.Errorf("failed to create output chain: %w", err)
+	}
+	// nft add chain inet filter forward { type filter hook forward priority 0 \; }
+	// Only created when forward filtering is enabled: with sandboxed runtimes such as
+	// Kata Containers using the l3forwarding networking model, pod traffic is routed
+	// between the CNI interface and the VM-side device inside the pod netns and thus
+	// never traverses input/output.
+	if cfg.EnableForwardFiltering {
+		if nftState.forward, err = nftState.addChain(&nftables.Chain{
+			Name:     "forward",
+			Table:    nftState.filter,
+			Hooknum:  nftables.ChainHookForward,
+			Priority: nftables.ChainPriorityFilter,
+			Type:     nftables.ChainTypeFilter,
+		}); err != nil {
+			return fmt.Errorf("failed to create forward chain: %w", err)
+		}
 	}
 	// nft add chain inet filter prerouting { type filter hook prerouting priority 0 \; }
 	if nftState.prerouting, err = nftState.addChain(&nftables.Chain{
@@ -438,7 +455,7 @@ func ruleReferencesChain(rule *nftables.Rule, chainName string) bool {
 	return false
 }
 
-func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (*nftState, error) {
+func bootstrapNetfilterRules(nft *nftables.Conn, cfg controllers.CommonRuleConfig, podInfo *controllers.PodInfo) (*nftState, error) {
 	if podInfo == nil || len(podInfo.Interfaces) == 0 {
 		return nil, fmt.Errorf("podInfo or podInfo.Interfaces is nil/empty")
 	}
@@ -473,7 +490,7 @@ func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (
 		chains: make(map[string]*nftables.Chain),
 	}
 
-	if err := bootstrapNetfilterChains(nftState); err != nil {
+	if err := bootstrapNetfilterChains(nftState, cfg); err != nil {
 		return nil, err
 	}
 
@@ -554,6 +571,56 @@ func bootstrapNetfilterRules(nft *nftables.Conn, podInfo *controllers.PodInfo) (
 
 	if _, err := nftState.updateRule(filterOutputRule, nft.InsertRule, false); err != nil {
 		return nftState, fmt.Errorf("failed to install rule: %w", err)
+	}
+
+	// Traffic that is forwarded through the pod netns (Kata l3forwarding) is
+	// classified by the same pod interface set as input/output: a packet entering
+	// the netns on a pod interface is pod ingress, a packet leaving the netns on a
+	// pod interface is pod egress.
+	if cfg.EnableForwardFiltering {
+		forwardIngressRule := &nftables.Rule{
+			Table:    nftState.filter,
+			Chain:    nftState.forward,
+			UserData: userDataComment(forwardIngressInterfaceFilterComment),
+			Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 0x1},
+				&expr.Lookup{
+					SetName:        nftState.interfaceFilterSet.Name,
+					SetID:          nftState.interfaceFilterSet.ID,
+					SourceRegister: 0x1,
+				},
+				&expr.Counter{},
+				&expr.Verdict{
+					Kind:  expr.VerdictJump,
+					Chain: nftState.ingressChain.Name,
+				},
+			},
+		}
+		if _, err := nftState.updateRule(forwardIngressRule, nft.InsertRule, false); err != nil {
+			return nftState, fmt.Errorf("failed to install rule: %w", err)
+		}
+
+		forwardEgressRule := &nftables.Rule{
+			Table:    nftState.filter,
+			Chain:    nftState.forward,
+			UserData: userDataComment(forwardEgressInterfaceFilterComment),
+			Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 0x1},
+				&expr.Lookup{
+					SetName:        nftState.interfaceFilterSet.Name,
+					SetID:          nftState.interfaceFilterSet.ID,
+					SourceRegister: 0x1,
+				},
+				&expr.Counter{},
+				&expr.Verdict{
+					Kind:  expr.VerdictJump,
+					Chain: nftState.egressChain.Name,
+				},
+			},
+		}
+		if _, err := nftState.updateRule(forwardEgressRule, nft.InsertRule, false); err != nil {
+			return nftState, fmt.Errorf("failed to install rule: %w", err)
+		}
 	}
 
 	if err := nftState.updateSet(nftState.interfaceNatSet, interfaceSetElements); err != nil {

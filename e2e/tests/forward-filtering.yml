@@ -1,0 +1,177 @@
+---
+# Two macvlan networks that model the two sides of an L3-forwarding pod:
+# "left" carries the clients, "right" carries the server. pod-router is attached
+# to both and routes between them, the same way a Kata Containers pod with
+# internetworking_model=l3forwarding routes between the CNI interface and the
+# VM-side device. Traffic through pod-router therefore traverses the nftables
+# forward hook in its network namespace, not input/output.
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  namespace: default
+  name: macvlan1-forward
+spec:
+  config: '{
+            "cniVersion": "0.3.1",
+            "name": "macvlan1-forward",
+            "plugins": [
+                {
+                    "type": "macvlan",
+                    "mode": "bridge",
+                    "capabilities": {"ips": true },
+                    "ipam":{
+                      "type":"static"
+                    }
+                }]
+        }'
+---
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  namespace: default
+  name: macvlan2-forward
+spec:
+  config: '{
+            "cniVersion": "0.3.1",
+            "name": "macvlan2-forward",
+            "plugins": [
+                {
+                    "type": "macvlan",
+                    "mode": "bridge",
+                    "capabilities": {"ips": true },
+                    "ipam":{
+                      "type":"static"
+                    }
+                }]
+        }'
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: test-forward-filtering
+---
+# Pods
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-router
+  namespace: test-forward-filtering
+  annotations:
+    k8s.v1.cni.cncf.io/networks: '[{
+      "name": "macvlan1-forward",
+      "namespace": "default",
+      "ips": ["2.2.40.254/24"]
+      },{
+      "name": "macvlan2-forward",
+      "namespace": "default",
+      "ips": ["2.2.41.254/24"]
+      }]'
+  labels:
+    app: test-forward-filtering
+    name: pod-router
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    # Route between net1 and net2 instead of terminating traffic locally.
+    command: ["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward && sleep infinity"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-server
+  namespace: test-forward-filtering
+  annotations:
+    k8s.v1.cni.cncf.io/networks: '[{
+      "name": "macvlan2-forward",
+      "namespace": "default",
+      "ips": ["2.2.41.1/24"]
+      }]'
+  labels:
+    app: test-forward-filtering
+    name: pod-server
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["sh", "-c", "ip route replace 2.2.40.0/24 via 2.2.41.254 dev net1 && nc -kl 0.0.0.0 5555"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-client-a
+  namespace: test-forward-filtering
+  annotations:
+    k8s.v1.cni.cncf.io/networks: '[{
+      "name": "macvlan1-forward",
+      "namespace": "default",
+      "ips": ["2.2.40.11/24"]
+      }]'
+  labels:
+    app: test-forward-filtering
+    name: pod-client-a
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["sh", "-c", "ip route replace 2.2.41.0/24 via 2.2.40.254 dev net1 && sleep infinity"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-client-b
+  namespace: test-forward-filtering
+  annotations:
+    k8s.v1.cni.cncf.io/networks: '[{
+      "name": "macvlan1-forward",
+      "namespace": "default",
+      "ips": ["2.2.40.12/24"]
+      }]'
+  labels:
+    app: test-forward-filtering
+    name: pod-client-b
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+  - name: macvlan-worker1
+    image: localhost:5000/multi-networkpolicy-nftables:e2e-test
+    imagePullPolicy: Never
+    command: ["sh", "-c", "ip route replace 2.2.41.0/24 via 2.2.40.254 dev net1 && sleep infinity"]
+    securityContext:
+      privileged: true
+---
+# MultiNetworkPolicy
+# The policy targets the routing pod and only accepts traffic originating from
+# pod-client-a. Because the routing pod never receives this traffic locally, it
+# is only enforced when the daemon runs with --enable-forward-filtering.
+# Return traffic from pod-server is accepted by the conntrack rule in the
+# common chain, so a TCP connection only completes if both directions pass.
+apiVersion: k8s.cni.cncf.io/v1beta1
+kind: MultiNetworkPolicy
+metadata:
+  name: testnetwork-policy-forward-1
+  namespace: test-forward-filtering
+  annotations:
+    k8s.v1.cni.cncf.io/policy-for: default/macvlan1-forward,default/macvlan2-forward
+spec:
+  podSelector:
+    matchLabels:
+      name: pod-router
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 2.2.40.11/32

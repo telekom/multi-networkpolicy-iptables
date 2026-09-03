@@ -123,7 +123,7 @@ func TestBootstrap(t *testing.T) {
 		},
 	}
 
-	_, err := bootstrapNetfilterRules(c, podMockInfo)
+	_, err := bootstrapNetfilterRules(c, controllers.CommonRuleConfig{}, podMockInfo)
 	if err != nil {
 		t.Fatalf("bootstrapNetfilterRules() failed: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestApplyCommonChainRules(t *testing.T) {
 			{InterfaceName: "eth2", IPs: []string{"10.0.0.0"}},
 		},
 	}
-	nftState, err := bootstrapNetfilterRules(c, podMockInfo)
+	nftState, err := bootstrapNetfilterRules(c, controllers.CommonRuleConfig{}, podMockInfo)
 	if err != nil {
 		t.Fatalf("bootstrapNetfilterRules() failed: %v", err)
 	}
@@ -1552,7 +1552,7 @@ func prepareEnv(c *nftables.Conn, createServer bool) (*nftState, string, *testPo
 		},
 	}
 
-	nftState, err := bootstrapNetfilterRules(c, podMockInfo)
+	nftState, err := bootstrapNetfilterRules(c, controllers.CommonRuleConfig{}, podMockInfo)
 	if err != nil {
 		return nil, "", nil, podMockInfo, fmt.Errorf("bootstrapNetfilterRules() failed: %w", err)
 	}
@@ -1957,7 +1957,7 @@ func TestFindRuleReturnsFirstMatch(t *testing.T) {
 			{InterfaceName: "eth0", IPs: []string{"10.0.0.1"}},
 		},
 	}
-	state, err := bootstrapNetfilterRules(c, podMockInfo)
+	state, err := bootstrapNetfilterRules(c, controllers.CommonRuleConfig{}, podMockInfo)
 	if err != nil {
 		t.Fatalf("bootstrapNetfilterRules() failed: %v", err)
 	}
@@ -2080,5 +2080,103 @@ func TestCleanupChainsKeepsForeignTableChains(t *testing.T) {
 	}
 	if !foundForeignChain {
 		t.Errorf("foreign empty chain was incorrectly removed")
+	}
+}
+
+// TestBootstrapForwardFiltering verifies that the forward hook is only wired up
+// when forward filtering is enabled, and that it classifies traffic with the same
+// pod interface set as the input/output chains.
+func TestBootstrapForwardFiltering(t *testing.T) {
+	podMockInfo := func() *controllers.PodInfo {
+		return &controllers.PodInfo{
+			Interfaces: []controllers.InterfaceInfo{
+				{NetattachName: "one", InterfaceName: "eth0", IPs: []string{"10.0.0.0", "fd00::"}},
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		name        string
+		cfg         controllers.CommonRuleConfig
+		wantForward bool
+	}{
+		{name: "disabled", cfg: controllers.CommonRuleConfig{}, wantForward: false},
+		{name: "enabled", cfg: controllers.CommonRuleConfig{EnableForwardFiltering: true}, wantForward: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, newNS := nftest.OpenSystemConn(t, true, DEBUG)
+			defer nftest.CleanupSystemConn(t, newNS, DEBUG)
+			defer c.FlushRuleset()
+			defer c.CloseLasting()
+			c.FlushRuleset()
+
+			state, err := bootstrapNetfilterRules(c, tc.cfg, podMockInfo())
+			if err != nil {
+				t.Fatalf("bootstrapNetfilterRules() failed: %v", err)
+			}
+			if err := c.Flush(); err != nil {
+				t.Fatalf("Cannot flush %v", err)
+			}
+
+			filterTable, err := c.ListTableOfFamily(FilterTableName, nftables.TableFamilyINet)
+			if err != nil {
+				t.Fatalf("c.ListTableOfFamily(%q) failed: %v", FilterTableName, err)
+			}
+			forwardChain, err := c.ListChain(filterTable, "forward")
+			if !tc.wantForward {
+				if err == nil && forwardChain != nil {
+					t.Fatalf("forward chain created although forward filtering is disabled")
+				}
+				if state.forward != nil {
+					t.Fatalf("nftState.forward = %v, want nil", state.forward)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("c.ListChain(forward) failed: %v", err)
+			}
+			if forwardChain == nil {
+				t.Fatalf("forward chain missing although forward filtering is enabled")
+			}
+			if forwardChain.Hooknum == nil || *forwardChain.Hooknum != *nftables.ChainHookForward {
+				t.Fatalf("forward chain hook = %v, want %v", forwardChain.Hooknum, *nftables.ChainHookForward)
+			}
+
+			rules, err := c.GetRules(filterTable, forwardChain)
+			if err != nil {
+				t.Fatalf("c.GetRules(forward) failed: %v", err)
+			}
+			wantJumps := map[string]struct {
+				metaKey expr.MetaKey
+				chain   string
+			}{
+				forwardIngressInterfaceFilterComment: {metaKey: expr.MetaKeyIIFNAME, chain: ingressChain},
+				forwardEgressInterfaceFilterComment:  {metaKey: expr.MetaKeyOIFNAME, chain: egressChain},
+			}
+			for _, rule := range rules {
+				comment, _ := userdata.GetString(rule.UserData, userdata.TypeComment)
+				want, ok := wantJumps[comment]
+				if !ok {
+					t.Errorf("unexpected rule %q in forward chain", comment)
+					continue
+				}
+				delete(wantJumps, comment)
+				meta, ok := rule.Exprs[0].(*expr.Meta)
+				if !ok || meta.Key != want.metaKey {
+					t.Errorf("rule %q: first expr = %v, want meta key %v", comment, rule.Exprs[0], want.metaKey)
+				}
+				lookup, ok := rule.Exprs[1].(*expr.Lookup)
+				if !ok || lookup.SetName != podInterfacesName {
+					t.Errorf("rule %q: second expr = %v, want lookup on %q", comment, rule.Exprs[1], podInterfacesName)
+				}
+				verdict, ok := rule.Exprs[len(rule.Exprs)-1].(*expr.Verdict)
+				if !ok || verdict.Kind != expr.VerdictJump || verdict.Chain != want.chain {
+					t.Errorf("rule %q: last expr = %v, want jump to %q", comment, rule.Exprs[len(rule.Exprs)-1], want.chain)
+				}
+			}
+			for comment := range wantJumps {
+				t.Errorf("missing rule %q in forward chain", comment)
+			}
+		})
 	}
 }
